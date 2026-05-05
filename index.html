@@ -2354,6 +2354,7 @@ function doLogin() {
     $('app').style.display='flex'
 
     actualizarLogoEnHeader()
+    actualizarSidebarPermisos()
     ajustarLayout()
 
     const ini = sesion.nombreCompleto.split(' ').map(n=>n[0]).slice(0,2).join('')
@@ -2779,6 +2780,7 @@ function marcarEnviado(msgId) {
 }
 
 function renderDeudores() {
+  if (!requirePermiso('ver_clientes','page-deudores')) return
   detectarYActualizarMora()
   const morosos = clientesDeudores()
   let totalDeuda=0, totalDias=0
@@ -2835,6 +2837,7 @@ function renderDeudores() {
 // CLIENTES
 // ════════════════════════════════════════════════════
 function renderClientes() {
+  if (!requirePermiso('ver_clientes','page-clientes')) return
   const b = $('s-clientes')?.value?.toLowerCase()||''
   let lista = DB.clientes
 
@@ -3336,6 +3339,7 @@ function frecuenciaDesc(freq, totalDias, numCuotas) {
 }
 
 function initNuevoCredito() {
+  if (!requirePermiso('crear_clientes','page-nuevo-credito')) return
   ncStep=1; ncClienteId=null
   ncMonto=''; ncDescripcion=''; ncCantCuotas=12; ncDiasDiario=30; ncPrimeraCuotaHoy=false; ncCuotasManuales=30; ncFechaPrimeraCuota=''
   // Cargar preferencia del usuario
@@ -4112,6 +4116,7 @@ function renderDiasCobro() {
 }
 
 function renderConfiguracion() {
+  if (!requirePermiso('config_sistema','page-configuracion')) return
   // ── Debug: check localStorage is working
   try {
     localStorage.setItem('_test_', '1')
@@ -4900,6 +4905,7 @@ function limpiarFiltrosHis() {
 }
 
 function renderHistorial() {
+  if (!sesion?.esAdmin) { $('page-historial').innerHTML='<div class="empty"><div class="ei">🔐</div><p>Solo administradores</p></div>'; return }
   const selUser = $('his-fil-user')
   if (!selUser) return
   const curUser = selUser.value
@@ -5145,6 +5151,7 @@ function limpiarFiltrosInf() {
 }
 
 function renderInformes() {
+  if (!requirePermiso('ver_informes','page-informes')) return
   // Populate user filter
   const selUser = $('inf-fil-user')
   if (!selUser) return
@@ -6703,6 +6710,7 @@ let crClienteId = null // cliente seleccionado en cobro rapido
 let crCuotasSeleccionadas = new Set() // cuotas elegidas para cobrar
 
 function renderCobroRapido() {
+  if (!requirePermiso('cobrar_cuotas','page-cobro-rapido')) return
   crClienteId = null
   crCuotasSeleccionadas = new Set()
   const inp = $('cr-buscar')
@@ -6942,6 +6950,76 @@ Cada cuota se registrará como EFECTIVO.`
 
   // Refresh the panel
   seleccionarClienteRapido(crClienteId)
+}
+
+
+// ════════════════════════════════════════════════════
+// SISTEMA DE PERMISOS
+// ════════════════════════════════════════════════════
+function hasPermiso(permiso) {
+  if (!sesion) return false
+  if (sesion.esAdmin) return true // admin tiene todo
+  return Array.isArray(sesion.permisos) && sesion.permisos.includes(permiso)
+}
+
+function requirePermiso(permiso, paginaId) {
+  if (!hasPermiso(permiso)) {
+    const el = $(paginaId)
+    if (el) el.innerHTML = `<div class="empty">
+      <div class="ei">🔐</div>
+      <p style="font-weight:700;margin-bottom:6px">Acceso restringido</p>
+      <p style="font-size:13px;color:var(--muted)">No tenés permiso para ver esta sección.<br>Contactá al administrador.</p>
+    </div>`
+    return false
+  }
+  return true
+}
+
+// Actualiza el sidebar según permisos del usuario
+function actualizarSidebarPermisos() {
+  if (!sesion) return
+
+  // Mapeo: data-page → permiso requerido
+  const paginaPermisos = {
+    'clientes':       'ver_clientes',
+    'nuevo-credito':  'crear_clientes',
+    'cobros-hoy':     'cobrar_cuotas',
+    'cobro-rapido':   'cobrar_cuotas',
+    'alertas':        'cobrar_cuotas',
+    'deudores':       'ver_clientes',
+    'refinanciacion': 'refinanciar',
+    'informes':       'ver_informes',
+    'configuracion':  'config_sistema',
+    'empresa':        'config_sistema',
+    'panel-admin':    null, // solo admin
+    'actividad':      null, // solo admin
+    'historial':      null, // solo admin
+    'aprobacion':     null, // solo admin
+    'backups':        null, // solo admin
+  }
+
+  // Show/hide sidebar nav buttons
+  document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
+    const page = btn.dataset.page
+    const permiso = paginaPermisos[page]
+    if (permiso === null) {
+      // Solo admin
+      btn.style.display = sesion.esAdmin ? '' : 'none'
+    } else if (permiso) {
+      btn.style.display = hasPermiso(permiso) ? '' : 'none'
+    }
+  })
+
+  // Show/hide mobile nav buttons
+  document.querySelectorAll('.m-nav-btn[data-page]').forEach(btn => {
+    const page = btn.dataset.page
+    const permiso = paginaPermisos[page]
+    if (permiso === null) {
+      btn.style.display = sesion.esAdmin ? '' : 'none'
+    } else if (permiso) {
+      btn.style.display = hasPermiso(permiso) ? '' : 'none'
+    }
+  })
 }
 
 // ── cierre overlay en click fuera
