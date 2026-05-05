@@ -1522,6 +1522,65 @@ select.form-input option{background:var(--s2)}
         <option value="Compañero/a de trabajo"><option value="Otro">
       </datalist>
     </div>
+
+    <!-- Panel Datos Laborales -->
+    <div id="panel-laboral" style="display:none">
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="font-size:13px;font-weight:700;color:var(--acc3);margin-bottom:14px">🏢 Datos del Empleador</h3>
+        <div class="form-grid">
+          <div class="form-group" style="grid-column:1/-1">
+            <label class="form-label">Razón Social</label>
+            <input class="form-input" id="cli-emp-razon" placeholder="Ej: Supermercados S.A.">
+          </div>
+          <div class="form-group">
+            <label class="form-label">CUIT</label>
+            <input class="form-input" id="cli-emp-cuit" placeholder="30-12345678-9">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Teléfono</label>
+            <input class="form-input" id="cli-emp-tel" placeholder="011-4555-1234" type="tel">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label class="form-label">Dirección</label>
+            <input class="form-input" id="cli-emp-dir" placeholder="Av. Corrientes 1234, CABA">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label class="form-label">Email</label>
+            <input class="form-input" id="cli-emp-email" placeholder="rrhh@empresa.com" type="email">
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:13px;font-weight:700;color:var(--acc3);margin-bottom:14px">💼 Datos del Empleo</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Cargo / Puesto</label>
+            <input class="form-input" id="cli-emp-cargo" placeholder="Ej: Vendedor, Administrativo...">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fecha de Ingreso</label>
+            <input class="form-input" id="cli-emp-ingreso" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Sueldo aproximado</label>
+            <input class="form-input" id="cli-emp-sueldo" placeholder="$0" type="number" min="0" step="1000">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tipo de relación laboral</label>
+            <select class="form-input" id="cli-emp-tipo">
+              <option value="">Seleccionar...</option>
+              <option value="Relación de dependencia">Relación de dependencia</option>
+              <option value="Monotributista">Monotributista</option>
+              <option value="Autónomo">Autónomo</option>
+              <option value="Informal">Informal</option>
+              <option value="Jubilado/Pensionado">Jubilado / Pensionado</option>
+              <option value="Sin actividad">Sin actividad</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('modal-cliente')">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarCliente()">✓ Guardar Cliente</button>
@@ -2927,6 +2986,20 @@ function openNuevoCliente(id=null) {
     $('cli-ref2-nombre') && ($('cli-ref2-nombre').value=c.ref2Nombre||'')
     $('cli-ref2-cel').value=c.ref2Celular||''; $('cli-ref2-rel').value=c.ref2Relacion||''
     $('cli-ref2-email') && ($('cli-ref2-email').value=c.ref2Email||'')
+    // Datos laborales
+    ;[['cli-email',c.email],['cli-emp-razon',c.empRazon],['cli-emp-cuit',c.empCuit],
+     ['cli-emp-tel',c.empTel],['cli-emp-dir',c.empDir],['cli-emp-email',c.empEmail],
+     ['cli-emp-cargo',c.empCargo],['cli-emp-ingreso',c.empIngreso],
+     ['cli-emp-sueldo',c.empSueldo],['cli-emp-tipo',c.empTipo]
+    ].forEach(([id,val])=>{ const el=$(id); if(el) el.value=val||'' })
+    // Datos laborales
+    const svL = (id,val) => { const el=$(`cli-${id}`); if(el) el.value=val||'' }
+    svL('email',        c.email)
+    svL('emp-razon',    c.empRazon);  svL('emp-cuit',    c.empCuit)
+    svL('emp-tel',      c.empTel);    svL('emp-dir',     c.empDir)
+    svL('emp-email',    c.empEmail);  svL('emp-cargo',   c.empCargo)
+    svL('emp-ingreso',  c.empIngreso);svL('emp-sueldo',  c.empSueldo)
+    svL('emp-tipo',     c.empTipo)
   } else {
     ['cli-nombre','cli-dni','cli-nac','cli-dir','cli-cel','cli-ref1-cel','cli-ref1-rel','cli-ref2-cel','cli-ref2-rel'].forEach(id=>$(id).value='')
   }
@@ -2934,12 +3007,15 @@ function openNuevoCliente(id=null) {
 }
 
 function switchCliTab(tab) {
-  $('clipanel-datos').style.display = tab==='datos'?'':'none'
-  $('clipanel-refs').style.display  = tab==='refs'?'':'none'
+  $('clipanel-datos').style.display  = tab==='datos'   ? '' : 'none'
+  $('clipanel-refs').style.display   = tab==='refs'    ? '' : 'none'
+  const panelLab = $('panel-laboral')
+  if (panelLab) panelLab.style.display = tab==='laboral' ? '' : 'none'
   $$('.cli-tab').forEach(b=>{
     const isActive = b.id === 'tab-'+tab
     b.style.borderBottomColor = isActive ? 'var(--acc)' : 'transparent'
     b.style.color = isActive ? 'var(--acc)' : 'var(--muted)'
+    b.style.fontWeight = isActive ? '700' : '600'
   })
 }
 
@@ -2950,18 +3026,21 @@ function guardarCliente() {
   if (!nom||!dni){showToast('Completá nombre y DNI','⚠️'); switchCliTab('datos'); return}
   if (!ref1cel||!ref1rel||!ref2cel||!ref2rel){showToast('Completá ambas referencias en la pestaña Referencias','⚠️'); switchCliTab('refs'); return}
   if (!editandoClienteId && DB.clientes.find(c=>c.dni===dni)){showToast('Ya existe un cliente con ese DNI','⚠️');return}
+  const sv = id => $(`cli-${id}`)?.value?.trim() || ''
   const data = {
     nombreApellido:nom, dni, fechaNacimiento:$('cli-nac').value,
     direccion:$('cli-dir').value.trim(), celular:$('cli-cel').value.trim(),
-    email: $('cli-email')?.value?.trim() || '',
-    ref1Nombre:  $('cli-ref1-nombre')?.value?.trim() || '',
-    ref1Celular: ref1cel,
-    ref1Relacion:ref1rel,
-    ref1Email:   $('cli-ref1-email')?.value?.trim() || '',
-    ref2Nombre:  $('cli-ref2-nombre')?.value?.trim() || '',
-    ref2Celular: ref2cel,
-    ref2Relacion:ref2rel,
-    ref2Email:   $('cli-ref2-email')?.value?.trim() || '',
+    email:       sv('email'),
+    ref1Nombre:  sv('ref1-nombre'), ref1Celular:ref1cel,
+    ref1Relacion:ref1rel,           ref1Email:  sv('ref1-email'),
+    ref2Nombre:  sv('ref2-nombre'), ref2Celular:ref2cel,
+    ref2Relacion:ref2rel,           ref2Email:  sv('ref2-email'),
+    // Datos laborales
+    empRazon:    sv('emp-razon'),   empCuit:     sv('emp-cuit'),
+    empTel:      sv('emp-tel'),     empDir:      sv('emp-dir'),
+    empEmail:    sv('emp-email'),   empCargo:    sv('emp-cargo'),
+    empIngreso:  sv('emp-ingreso'), empSueldo:   sv('emp-sueldo'),
+    empTipo:     sv('emp-tipo'),
   }
   if (editandoClienteId) {
     Object.assign(DB.clientes.find(c=>c.id===editandoClienteId), data)
@@ -2997,6 +3076,12 @@ function guardarCliente() {
         ref2Celular:  savedCli.ref2Celular,
         ref2Relacion: savedCli.ref2Relacion,
         ref2Email:    savedCli.ref2Email,
+        email:        savedCli.email,
+        empRazon:     savedCli.empRazon,    empCuit:    savedCli.empCuit,
+        empTel:       savedCli.empTel,      empDir:     savedCli.empDir,
+        empEmail:     savedCli.empEmail,    empCargo:   savedCli.empCargo,
+        empIngreso:   savedCli.empIngreso,  empSueldo:  savedCli.empSueldo,
+        empTipo:      savedCli.empTipo,
       })
     }).catch(e => console.error('Error guardando cliente:', e))
   }
@@ -6438,6 +6523,15 @@ async function cargarDesdeSupa() {
         ref2Relacion:   d.ref2Relacion  || '',
         ref2Email:      d.ref2Email     || '',
         email:          d.email         || '',
+        empRazon:       d.empRazon      || '',
+        empCuit:        d.empCuit       || '',
+        empTel:         d.empTel        || '',
+        empDir:         d.empDir        || '',
+        empEmail:       d.empEmail      || '',
+        empCargo:       d.empCargo      || '',
+        empIngreso:     d.empIngreso    || '',
+        empSueldo:      d.empSueldo     || '',
+        empTipo:        d.empTipo       || '',
         enMora:         d.enMora || false
       }
     })
