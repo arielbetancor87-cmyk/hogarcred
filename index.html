@@ -1510,8 +1510,10 @@ select.form-input option{background:var(--s2)}
       <div style="background:var(--s2);border-radius:var(--r);padding:16px;border:1px solid var(--bord)">
         <p style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px;margin-bottom:12px;color:var(--acc3)">📞 Referencia 2</p>
         <div class="form-grid">
-          <div><label class="form-label">Celular *</label><input class="form-input" id="cli-ref2-cel" placeholder="1155672233"></div>
-          <div><label class="form-label">Relación con el titular *</label><input class="form-input" id="cli-ref2-rel" placeholder="Ej: Hermano, Vecino, Jefe..." list="relaciones-list"></div>
+          <div><label class="form-label">Nombre y apellido</label><input class="form-input" id="cli-ref2-nombre" placeholder="Ej: María García"></div>
+          <div><label class="form-label">Relación con el titular</label><input class="form-input" id="cli-ref2-rel" placeholder="Ej: Hermano, Vecino, Jefe..." list="relaciones-list"></div>
+          <div><label class="form-label">Celular *</label><input class="form-input" id="cli-ref2-cel" placeholder="1155672233" type="tel"></div>
+          <div><label class="form-label">Email</label><input class="form-input" id="cli-ref2-email" placeholder="ejemplo@mail.com" type="email"></div>
         </div>
       </div>
       <datalist id="relaciones-list">
@@ -2919,8 +2921,12 @@ function openNuevoCliente(id=null) {
     const c = DB.clientes.find(x=>x.id===id)
     $('cli-nombre').value=c.nombreApellido||''; $('cli-dni').value=c.dni||''
     $('cli-nac').value=c.fechaNacimiento||''; $('cli-dir').value=c.direccion||''; $('cli-cel').value=c.celular||''
+    $('cli-ref1-nombre') && ($('cli-ref1-nombre').value=c.ref1Nombre||'')
     $('cli-ref1-cel').value=c.ref1Celular||''; $('cli-ref1-rel').value=c.ref1Relacion||''
+    $('cli-ref1-email') && ($('cli-ref1-email').value=c.ref1Email||'')
+    $('cli-ref2-nombre') && ($('cli-ref2-nombre').value=c.ref2Nombre||'')
     $('cli-ref2-cel').value=c.ref2Celular||''; $('cli-ref2-rel').value=c.ref2Relacion||''
+    $('cli-ref2-email') && ($('cli-ref2-email').value=c.ref2Email||'')
   } else {
     ['cli-nombre','cli-dni','cli-nac','cli-dir','cli-cel','cli-ref1-cel','cli-ref1-rel','cli-ref2-cel','cli-ref2-rel'].forEach(id=>$(id).value='')
   }
@@ -2944,8 +2950,19 @@ function guardarCliente() {
   if (!nom||!dni){showToast('Completá nombre y DNI','⚠️'); switchCliTab('datos'); return}
   if (!ref1cel||!ref1rel||!ref2cel||!ref2rel){showToast('Completá ambas referencias en la pestaña Referencias','⚠️'); switchCliTab('refs'); return}
   if (!editandoClienteId && DB.clientes.find(c=>c.dni===dni)){showToast('Ya existe un cliente con ese DNI','⚠️');return}
-  const data = { nombreApellido:nom, dni, fechaNacimiento:$('cli-nac').value, direccion:$('cli-dir').value.trim(), celular:$('cli-cel').value.trim(),
-    ref1Celular:ref1cel, ref1Relacion:ref1rel, ref2Celular:ref2cel, ref2Relacion:ref2rel }
+  const data = {
+    nombreApellido:nom, dni, fechaNacimiento:$('cli-nac').value,
+    direccion:$('cli-dir').value.trim(), celular:$('cli-cel').value.trim(),
+    email: $('cli-email')?.value?.trim() || '',
+    ref1Nombre:  $('cli-ref1-nombre')?.value?.trim() || '',
+    ref1Celular: ref1cel,
+    ref1Relacion:ref1rel,
+    ref1Email:   $('cli-ref1-email')?.value?.trim() || '',
+    ref2Nombre:  $('cli-ref2-nombre')?.value?.trim() || '',
+    ref2Celular: ref2cel,
+    ref2Relacion:ref2rel,
+    ref2Email:   $('cli-ref2-email')?.value?.trim() || '',
+  }
   if (editandoClienteId) {
     Object.assign(DB.clientes.find(c=>c.id===editandoClienteId), data)
     registrarAuditoria('MODIFICACION_CLIENTE','cliente',editandoClienteId,{nombre:nom})
@@ -2971,12 +2988,15 @@ function guardarCliente() {
       direccion:    savedCli.direccion,
       datos: JSON.stringify({
         fechaNacimiento: savedCli.fechaNacimiento,
-        ref1Nombre:  savedCli.ref1Nombre,
-        ref1Celular: savedCli.ref1Celular,
-        ref1Relacion:savedCli.ref1Relacion,
-        ref2Nombre:  savedCli.ref2Nombre,
-        ref2Celular: savedCli.ref2Celular,
-        ref2Relacion:savedCli.ref2Relacion
+        email:        savedCli.email,
+        ref1Nombre:   savedCli.ref1Nombre,
+        ref1Celular:  savedCli.ref1Celular,
+        ref1Relacion: savedCli.ref1Relacion,
+        ref1Email:    savedCli.ref1Email,
+        ref2Nombre:   savedCli.ref2Nombre,
+        ref2Celular:  savedCli.ref2Celular,
+        ref2Relacion: savedCli.ref2Relacion,
+        ref2Email:    savedCli.ref2Email,
       })
     }).catch(e => console.error('Error guardando cliente:', e))
   }
@@ -6409,12 +6429,15 @@ async function cargarDesdeSupa() {
         celular:        cl.celular,
         direccion:      cl.direccion,
         fechaNacimiento:d.fechaNacimiento || '',
-        ref1Nombre:     d.ref1Nombre  || '',
-        ref1Celular:    d.ref1Celular  || '',
-        ref1Relacion:   d.ref1Relacion || '',
-        ref2Nombre:     d.ref2Nombre  || '',
-        ref2Celular:    d.ref2Celular  || '',
-        ref2Relacion:   d.ref2Relacion || '',
+        ref1Nombre:     d.ref1Nombre   || '',
+        ref1Celular:    d.ref1Celular   || '',
+        ref1Relacion:   d.ref1Relacion  || '',
+        ref1Email:      d.ref1Email     || '',
+        ref2Nombre:     d.ref2Nombre    || '',
+        ref2Celular:    d.ref2Celular   || '',
+        ref2Relacion:   d.ref2Relacion  || '',
+        ref2Email:      d.ref2Email     || '',
+        email:          d.email         || '',
         enMora:         d.enMora || false
       }
     })
