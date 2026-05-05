@@ -4699,6 +4699,7 @@ function renderPanelAdmin() {
 }
 
 function openModalUsuarioAdmin() {
+  if (!sesion?.esAdmin) { showToast('Solo el administrador puede crear usuarios','⚠️'); return }
   editandoUsuarioAdminId = null
   admPermsSeleccionados = []
   $('admin-usr-titulo').textContent = 'Nuevo Usuario'
@@ -4709,6 +4710,7 @@ function openModalUsuarioAdmin() {
 }
 
 function abrirEditarUsuarioAdmin(id) {
+  if (!sesion?.esAdmin) { showToast('Solo el administrador puede editar usuarios','⚠️'); return }
   const u = DB.usuarios.find(x=>x.id===id)
   if (!u) return
   editandoUsuarioAdminId = id
@@ -4723,20 +4725,44 @@ function abrirEditarUsuarioAdmin(id) {
 }
 
 function renderAdmPermsGrid() {
-  $('adm-perms-grid').innerHTML = PERMS_ALL.map(p=>`
-    <button class="perm-btn${admPermsSeleccionados.includes(p.key)?' on':''}" id="admpm-${p.key}" onclick="toggleAdmPerm('${p.key}')">
-      <div class="perm-box" id="admpm-box-${p.key}">${admPermsSeleccionados.includes(p.key)?'✓':''}</div>
+  const esAdmin = sesion?.esAdmin
+  $('adm-perms-grid').innerHTML = PERMS_ALL.map(p=>{
+    const sel = admPermsSeleccionados.includes(p.key)
+    if (!esAdmin) {
+      // Non-admin: read-only display of own permissions
+      return `<div class="perm-btn${sel?' on':''}" style="cursor:default;opacity:${sel?1:.45}">
+        <div class="perm-box">${sel?'✓':''}</div>
+        <span>${p.label}</span>
+      </div>`
+    }
+    return `<button class="perm-btn${sel?' on':''}" id="admpm-${p.key}" onclick="toggleAdmPerm('${p.key}')">
+      <div class="perm-box" id="admpm-box-${p.key}">${sel?'✓':''}</div>
       <span>${p.label}</span>
-    </button>`).join('')
+    </button>`
+  }).join('')
+  // Show/hide save button based on role
+  const btn = $('adm-usr-btn')
+  const pass1 = $('adm-pass')
+  const pass2 = $('adm-pass2')
+  if (!esAdmin) {
+    if (btn) btn.style.display = 'none'
+    if (pass1) pass1.closest('.form-group') && (pass1.closest('.modal-body') || pass1.parentElement).querySelectorAll('.form-group').forEach(g => {
+      if (g.contains(pass1) || g.contains(pass2)) g.style.display = 'none'
+    })
+  } else {
+    if (btn) btn.style.display = ''
+  }
 }
 
 function toggleAdmPerm(key) {
+  if (!sesion?.esAdmin) return // non-admin cannot change perms
   if (admPermsSeleccionados.includes(key)) admPermsSeleccionados = admPermsSeleccionados.filter(x=>x!==key)
   else admPermsSeleccionados.push(key)
   renderAdmPermsGrid()
 }
 
 function guardarUsuarioAdmin() {
+  if (!sesion?.esAdmin) { showToast('Sin permisos para esta acción','⚠️'); return }
   const nom=$('adm-nombre').value.trim(), usr=$('adm-user').value.trim().toLowerCase()
   const pass=$('adm-pass').value, pass2=$('adm-pass2').value
   if (!nom||!usr) { showToast('Completá nombre y usuario','⚠️'); return }
