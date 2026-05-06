@@ -174,8 +174,8 @@ select.form-input option{background:var(--s2)}
 .plan-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
 .plan-card{background:var(--s2);border:2px solid var(--bord);border-radius:var(--r-sm);padding:14px 8px;text-align:center;cursor:pointer;transition:all .15s}
 .plan-card:hover,.plan-card.sel{border-color:var(--acc);background:rgba(0,229,160,.08)}
-.plan-n{font-family:'Syne',sans-serif;font-size:26px;font-weight:800;color:var(--acc)}
-.plan-lbl{font-size:10px;color:var(--muted)}
+.plan-n{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:var(--acc);line-height:1.2}
+.plan-lbl{display:none}
 .plan-monto{font-size:12px;font-weight:600;margin-top:5px}
 .plan-tasa{font-size:10px;color:var(--muted);margin-top:2px}
 
@@ -1483,6 +1483,7 @@ select.form-input option{background:var(--s2)}
     <div style="display:flex;gap:4px;border-bottom:1px solid var(--bord);margin-bottom:18px">
       <button class="cli-tab active" id="tab-datos" onclick="switchCliTab('datos')" style="padding:8px 18px;background:none;border:none;border-bottom:2px solid var(--acc);color:var(--acc);font-family:'Syne',sans-serif;font-weight:700;font-size:13px;cursor:pointer">📋 Datos</button>
       <button class="cli-tab" id="tab-refs" onclick="switchCliTab('refs')" style="padding:8px 18px;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:13px;cursor:pointer">📞 Referencias</button>
+      <button class="cli-tab" id="tab-laboral" onclick="switchCliTab('laboral')" style="padding:8px 18px;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:13px;cursor:pointer">💼 Datos Laborales</button>
     </div>
     <!-- Panel datos -->
     <div id="clipanel-datos">
@@ -1491,8 +1492,8 @@ select.form-input option{background:var(--s2)}
         <div><label class="form-label">DNI *</label><input class="form-input" id="cli-dni" placeholder="30445112"></div>
         <div><label class="form-label">Fecha de Nacimiento *</label><input class="form-input" id="cli-nac" type="date"></div>
         <div class="col-span-2"><label class="form-label">Dirección *</label><input class="form-input" id="cli-dir" placeholder="Av. San Martín 1234, Buenos Aires"></div>
-        <div><label class="form-label">Celular titular *</label><input class="form-input" id="cli-cel" placeholder="1145218890"></div>
-        <div></div>
+        <div><label class="form-label">Celular titular *</label><input class="form-input" id="cli-cel" placeholder="1145218890" type="tel"></div>
+        <div><label class="form-label">Email</label><input class="form-input" id="cli-email" placeholder="ejemplo@mail.com" type="email"></div>
       </div>
     </div>
     <!-- Panel referencias -->
@@ -1503,8 +1504,10 @@ select.form-input option{background:var(--s2)}
       <div style="background:var(--s2);border-radius:var(--r);padding:16px;margin-bottom:14px;border:1px solid var(--bord)">
         <p style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px;margin-bottom:12px;color:var(--acc)">📞 Referencia 1</p>
         <div class="form-grid">
-          <div><label class="form-label">Celular *</label><input class="form-input" id="cli-ref1-cel" placeholder="1145218891"></div>
-          <div><label class="form-label">Relación con el titular *</label><input class="form-input" id="cli-ref1-rel" placeholder="Ej: Padre, Madre, Amigo..." list="relaciones-list"></div>
+          <div><label class="form-label">Nombre y apellido</label><input class="form-input" id="cli-ref1-nombre" placeholder="Ej: Juan Pérez"></div>
+          <div><label class="form-label">Relación con el titular</label><input class="form-input" id="cli-ref1-rel" placeholder="Ej: Padre, Madre, Amigo..." list="relaciones-list"></div>
+          <div><label class="form-label">Celular *</label><input class="form-input" id="cli-ref1-cel" placeholder="1145218891" type="tel"></div>
+          <div><label class="form-label">Email</label><input class="form-input" id="cli-ref1-email" placeholder="ejemplo@mail.com" type="email"></div>
         </div>
       </div>
       <div style="background:var(--s2);border-radius:var(--r);padding:16px;border:1px solid var(--bord)">
@@ -3101,6 +3104,7 @@ function verCliente(id) {
   $('vc-body').innerHTML = `
     <div style="display:flex;gap:4px;border-bottom:1px solid var(--bord);margin-bottom:16px">
       <button onclick="vcTab(this,'vc-p-datos')" class="vc-tabk" style="padding:7px 16px;background:none;border:none;border-bottom:2px solid var(--acc);color:var(--acc);font-family:'Syne',sans-serif;font-weight:700;font-size:12px;cursor:pointer">📋 Datos</button>
+      <button onclick="vcTab(this,'vc-p-laboral')" class="vc-tabk" style="padding:7px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:12px;cursor:pointer">💼 Laboral</button>
       <button onclick="vcTab(this,'vc-p-refs')"  class="vc-tabk" style="padding:7px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:12px;cursor:pointer">📞 Referencias</button>
       <button onclick="vcTab(this,'vc-p-creds')" class="vc-tabk" style="padding:7px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:12px;cursor:pointer">📋 Créditos</button>
       <button onclick="vcTab(this,'vc-p-pagos','${id}')" class="vc-tabk" style="padding:7px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'Syne',sans-serif;font-weight:600;font-size:12px;cursor:pointer">💳 Historial pagos</button>
@@ -3153,6 +3157,21 @@ function verCliente(id) {
       }).join('')}
       ${creds.length<3?`<button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="closeModal('modal-ver-cliente');ncClienteId='${id}';goTo('nuevo-credito')">+ Nuevo Crédito</button>`:''}
     </div>
+
+        <div id="vc-p-laboral" style="display:none">
+          ${(c.empRazon||c.empCargo||c.empTipo) ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;padding:8px 0">
+            ${c.empRazon?'<div><span style="color:var(--muted)">Empleador</span><br><b>'+c.empRazon+'</b></div>':''}
+            ${c.empCuit?'<div><span style="color:var(--muted)">CUIT</span><br>'+c.empCuit+'</div>':''}
+            ${c.empCargo?'<div><span style="color:var(--muted)">Cargo</span><br>'+c.empCargo+'</div>':''}
+            ${c.empTipo?'<div><span style="color:var(--muted)">Tipo relación</span><br>'+c.empTipo+'</div>':''}
+            ${c.empIngreso?'<div><span style="color:var(--muted)">Ingreso</span><br>'+c.empIngreso+'</div>':''}
+            ${c.empSueldo?'<div><span style="color:var(--muted)">Sueldo</span><br>$'+c.empSueldo+'</div>':''}
+            ${c.empTel?'<div><span style="color:var(--muted)">Tel. trabajo</span><br>'+c.empTel+'</div>':''}
+            ${c.empEmail?'<div><span style="color:var(--muted)">Email trabajo</span><br>'+c.empEmail+'</div>':''}
+            ${c.empDir?'<div style="grid-column:1/-1"><span style="color:var(--muted)">Dirección trabajo</span><br>'+c.empDir+'</div>':''}
+          </div>` : '<p style="color:var(--muted);font-size:13px;padding:8px 0">Sin datos laborales cargados</p>'}
+        </div>
 
         <div id="vc-p-pagos" style="display:none">
       <div id="pagos-container-${id}"></div>
@@ -3677,11 +3696,12 @@ function renderNuevoCredito() {
         const planCards = [3,6,12,18].map(n=>{
           const t=DB.config['tasa_'+n+'_cuotas']||0
           const tot2=monto*(1+t/100), mc2=tot2/n
-          return '<div class="plan-card'+(ncCantCuotas===n?' sel':'')+'" data-n="'+n+'" onclick="ncCantCuotas=parseInt(this.dataset.n);renderNuevoCredito()">'+
-            '<div class="plan-n">'+n+'</div>'+
-            '<div class="plan-lbl">cuotas</div>'+
-            (monto>0?'<div class="plan-monto">'+fmtMoney(mc2)+'/c</div>':'<div class="plan-monto c-muted">TNA '+t+'%</div>')+
-          '</div>'
+          const sel = ncCantCuotas===n
+          return `<div class="plan-card${sel?' sel':''}" data-n="${n}" onclick="ncCantCuotas=${n};actualizarResumenCredito()">
+            <div class="plan-n">${n}</div>
+            <div class="plan-lbl">cuotas</div>
+            ${monto>0?`<div class="plan-monto">${fmtMoney(mc2)}/c</div>`:`<div class="plan-monto c-muted">TNA ${t}%</div>`}
+          </div>`
         }).join('')
 
         const isManual = ![3,6,12,18].includes(ncCantCuotas)
@@ -3696,7 +3716,7 @@ function renderNuevoCredito() {
             '<div class="plan-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px">'+planCards+'</div>'+
             '<div style="display:flex;align-items:center;gap:10px;background:var(--s2);border-radius:var(--r-sm);padding:10px 14px;border:1px solid '+(isManual?'var(--acc)':'var(--bord)')+'">'+
               '<div>'+
-                '<p style="font-size:11px;color:var(--muted);margin-bottom:5px">✏️ Cantidad personalizada</p>'+
+                '<p style="font-size:11px;color:var(--muted);margin-bottom:5px">✏️ O ingresá cualquier cantidad</p>'+
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
                   '<input type="number" min="1" max="360" id="nc-cuotas-manual" value="'+ncCantCuotas+'" '+
                     'style="width:80px;padding:6px 10px;background:var(--s1);border:2px solid '+(isManual?'var(--acc)':'var(--bord)')+';border-radius:8px;color:var(--text);font-size:18px;font-weight:800;font-family:Syne,sans-serif;text-align:center" '+
