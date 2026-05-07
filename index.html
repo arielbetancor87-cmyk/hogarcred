@@ -3370,7 +3370,7 @@ function verCredito(id) {
 // NUEVO CRÉDITO
 // ════════════════════════════════════════════════════
 // ── Variables estado nuevo crédito (sin producto)
-let ncMonto = '', ncDescripcion = '', ncFrecuencia = 'mensual', ncCantCuotas = 12, ncDiasDiario = 30, ncPrimeraCuotaHoy = false, ncCuotasManuales = 30, ncFechaPrimeraCuota = ''
+let ncMonto = '', ncDescripcion = '', ncFrecuencia = 'mensual', ncCantCuotas = 12, ncDiasDiario = 30, ncPrimeraCuotaHoy = false, ncCuotasManuales = 30, ncFechaPrimeraCuota = '', ncTipoCuota = 'vencida', ncMetodoPagoAdel = 'EFECTIVO'
 
 // Etiquetas de frecuencia
 const FREQ_LABELS = { mensual:'Mensual', quincenal:'Quincenal', semanal:'Semanal', diario:'Diario' }
@@ -3465,7 +3465,7 @@ function frecuenciaDesc(freq, totalDias, numCuotas) {
 function initNuevoCredito() {
   if (!requirePermiso('crear_clientes','page-nuevo-credito')) return
   ncStep=1; ncClienteId=null
-  ncMonto=''; ncDescripcion=''; ncCantCuotas=12; ncDiasDiario=30; ncPrimeraCuotaHoy=false; ncCuotasManuales=30; ncFechaPrimeraCuota=''
+  ncMonto=''; ncDescripcion=''; ncCantCuotas=12; ncDiasDiario=30; ncPrimeraCuotaHoy=false; ncCuotasManuales=30; ncFechaPrimeraCuota=''; ncTipoCuota='vencida'; ncMetodoPagoAdel='EFECTIVO'
   // Cargar preferencia del usuario
   const pref = DB.preferenciasUsuario[sesion?.id]
   ncFrecuencia = pref?.frecuencia || DB.config.frecuencia_default || 'mensual'
@@ -3548,6 +3548,44 @@ function actualizarResumenCredito() {
 }
 
 
+
+function filterNcClientes(b) {
+  $$('#nc-clis button').forEach(btn=>{
+    btn.style.display = btn.textContent.toLowerCase().includes(b.toLowerCase()) ? '' : 'none'
+  })
+}
+
+
+
+
+function renderTipoCuotaHTML() {
+  let html = '<div style="background:var(--s2);border-radius:var(--r-sm);padding:14px;margin-bottom:10px">'
+  html += '<p style="font-size:13px;font-weight:600;margin-bottom:10px">📌 Tipo de cuota</p>'
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+  ;[{id:'adelantada',label:'⚡ Adelantada',desc:'Se cobra hoy'},{id:'vencida',label:'📅 Vencida',desc:'Se define fecha'}].forEach(t=>{
+    const sel = ncTipoCuota===t.id
+    html += '<div onclick="ncTipoCuota=\''+t.id+'\';renderNuevoCredito()" style="cursor:pointer;border:2px solid '+(sel?'var(--acc)':'var(--bord)')+';border-radius:10px;background:'+(sel?'rgba(0,229,160,.08)':'var(--s1)')+';padding:12px 10px;text-align:center">'
+    html += '<p style="font-size:13px;font-weight:800;color:'+(sel?'var(--acc)':'var(--text)')+'">'+t.label+'</p>'
+    html += '<p style="font-size:10px;color:var(--muted);margin-top:3px">'+t.desc+'</p>'
+    html += '</div>'
+  })
+  html += '</div></div>'
+  html += '<div style="background:var(--s2);border-radius:var(--r-sm);padding:14px;margin-bottom:4px">'
+  html += '<p style="font-size:13px;font-weight:600;margin-bottom:8px">'+(ncTipoCuota==='adelantada'?'📅 Fecha segunda cuota':'📅 Fecha primera cuota')+'</p>'
+  if (ncTipoCuota==='adelantada') html += '<p style="font-size:11px;color:var(--acc);margin-bottom:6px">⚡ Cuota 1 = hoy</p>'
+  html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+  html += '<input type="date" id="nc-fecha-primera" class="form-input" value="'+(ncFechaPrimeraCuota||'')+'" style="width:170px" oninput="ncFechaPrimeraCuota=this.value;actualizarResumenCredito()">'
+  html += '<button class="btn btn-ghost btn-sm" onclick="setFechaPrimeraCuota(0)">Hoy</button>'
+  html += '<button class="btn btn-ghost btn-sm" onclick="setFechaPrimeraCuota(1)">Mañana</button>'
+  html += '<button class="btn btn-ghost btn-sm" onclick="setFechaPrimeraCuotaAuto()">Auto</button>'
+  html += '</div>'
+  html += '<p style="font-size:11px;color:var(--muted);margin-top:5px">'+(ncFechaPrimeraCuota?'📅 '+(ncTipoCuota==='adelantada'?'2da cuota':'1ra cuota')+': '+fmtDate(ncFechaPrimeraCuota):'📅 Elegí una fecha o usá Auto')+'</p>'
+  html += '</div>'
+  return html
+}
+
+
+
 function renderNuevoCredito() {
   const pasos = ['Crédito', 'Cliente', 'Confirmar']
   $('nc-steps').innerHTML = pasos.map((p,i)=>{
@@ -3594,15 +3632,10 @@ function renderNuevoCredito() {
         '<label class="form-label">Frecuencia de pago</label>' +
         '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">' +
           ['mensual','quincenal','semanal','diario'].map(f=>{
-            const fIcon = f==='mensual'?'📅':f==='quincenal'?'🗓️':f==='semanal'?'📆':'⏰'
-            const fSel  = ncFrecuencia===f
-            const fClr  = fSel?'var(--acc)':'var(--muted)'
-            const fBord = fSel?'var(--acc)':'var(--bord)'
-            const fBg   = fSel?'rgba(0,229,160,.08)':'var(--s2)'
-            return '<div class="plan-card" data-freq="'+f+'" onclick="ncFrecuencia=this.dataset.freq;renderNuevoCredito()" '+
-              'style="cursor:pointer;border:2px solid '+fBord+';background:'+fBg+'">'+
-              '<div style="font-size:20px;margin-bottom:4px">'+fIcon+'</div>'+
-              '<div class="plan-lbl" style="font-size:11px;font-weight:700;color:'+fClr+'">'+FREQ_LABELS[f]+'</div>'+
+            const fSel=ncFrecuencia===f
+            return '<div class="plan-card" data-freq=\''+f+'\' onclick="ncFrecuencia=this.dataset.freq;renderNuevoCredito()" '+
+              'style="cursor:pointer;border:2px solid '+(fSel?'var(--acc)':'var(--bord)')+';background:'+(fSel?'rgba(0,229,160,.08)':'var(--s2)')+';padding:16px 8px;min-height:54px;display:flex;align-items:center;justify-content:center">'+
+              '<div style="font-size:15px;font-weight:800;font-family:Syne,sans-serif;color:'+(fSel?'var(--acc)':'var(--text)')+'">'+FREQ_LABELS[f]+'</div>'+
             '</div>'
           }).join('') +
         '</div>' +
@@ -3670,24 +3703,6 @@ function renderNuevoCredito() {
             '</div>'+
             '<p style="font-size:11px;color:var(--muted)">Activos: <b style="color:var(--text)">'+diasSelStr+'</b></p>'+
             (diasCobro.length===0 ? '<p style="color:var(--danger);font-size:12px;margin-top:6px">⚠️ Seleccioná al menos un día</p>' : '')+
-          '</div>'+
-
-          // Primera cuota toggle
-          '<div style="background:var(--s2);border-radius:var(--r-sm);padding:14px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:12px">'+
-            '<div>'+
-              '<p style="font-size:13px;font-weight:600;margin-bottom:2px">📅 Primera cuota</p>'+
-              '<p style="font-size:11px;color:var(--muted)" id="nc-primera-desc">'+
-                (ncPrimeraCuotaHoy?'✅ Vence el día de creación del crédito':'📅 Vence al siguiente día hábil')+
-              '</p>'+
-            '</div>'+
-            '<div style="display:flex;gap:6px">'+
-              '<button data-opt="hoy" id="nc-btn-hoy" '+
-                'onclick="ncPrimeraCuotaHoy=true;actualizarBtnPrimeraCuota();actualizarResumenCredito()" '+
-                'class="btn '+(ncPrimeraCuotaHoy?'btn-primary':'btn-ghost')+' btn-sm" style="font-size:12px">Mismo día</button>'+
-              '<button data-opt="sig" id="nc-btn-sig" '+
-                'onclick="ncPrimeraCuotaHoy=false;actualizarBtnPrimeraCuota();actualizarResumenCredito()" '+
-                'class="btn '+(ncPrimeraCuotaHoy?'btn-ghost':'btn-primary')+' btn-sm" style="font-size:12px">Día siguiente</button>'+
-            '</div>'+
           '</div>'
         )
       })() : (()=>{
@@ -3696,12 +3711,11 @@ function renderNuevoCredito() {
         const planCards = [3,6,12,18].map(n=>{
           const t=DB.config['tasa_'+n+'_cuotas']||0
           const tot2=monto*(1+t/100), mc2=tot2/n
-          const sel = ncCantCuotas===n
-          return `<div class="plan-card${sel?' sel':''}" data-n="${n}" onclick="ncCantCuotas=${n};actualizarResumenCredito()">
-            <div class="plan-n">${n}</div>
-            <div class="plan-lbl">cuotas</div>
-            ${monto>0?`<div class="plan-monto">${fmtMoney(mc2)}/c</div>`:`<div class="plan-monto c-muted">TNA ${t}%</div>`}
-          </div>`
+          return '<div class="plan-card'+(ncCantCuotas===n?' sel':'')+'" data-n="'+n+'" onclick="ncCantCuotas=parseInt(this.dataset.n);renderNuevoCredito()">'+
+            '<div class="plan-n">'+n+'</div>'+
+            '<div class="plan-lbl">cuotas</div>'+
+            (monto>0?'<div class="plan-monto">'+fmtMoney(mc2)+'/c</div>':'<div class="plan-monto c-muted">TNA '+t+'%</div>')+
+          '</div>'
         }).join('')
 
         const isManual = ![3,6,12,18].includes(ncCantCuotas)
@@ -3713,10 +3727,10 @@ function renderNuevoCredito() {
         return (
           '<div class="form-group">'+
             '<label class="form-label">Cantidad de cuotas</label>'+
-            '<div class="plan-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px">'+planCards+'</div>'+
+            ''+ 
             '<div style="display:flex;align-items:center;gap:10px;background:var(--s2);border-radius:var(--r-sm);padding:10px 14px;border:1px solid '+(isManual?'var(--acc)':'var(--bord)')+'">'+
               '<div>'+
-                '<p style="font-size:11px;color:var(--muted);margin-bottom:5px">✏️ O ingresá cualquier cantidad</p>'+
+                '<p style="font-size:11px;color:var(--muted);margin-bottom:5px">✏️ Cantidad personalizada</p>'+
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
                   '<input type="number" min="1" max="360" id="nc-cuotas-manual" value="'+ncCantCuotas+'" '+
                     'style="width:80px;padding:6px 10px;background:var(--s1);border:2px solid '+(isManual?'var(--acc)':'var(--bord)')+';border-radius:8px;color:var(--text);font-size:18px;font-weight:800;font-family:Syne,sans-serif;text-align:center" '+
@@ -3727,22 +3741,7 @@ function renderNuevoCredito() {
               '</div>'+
             '</div>'+
           '</div>'+
-                    '<div style="background:var(--s2);border-radius:var(--r-sm);padding:14px;margin-bottom:4px">'+
-            '<p style="font-size:13px;font-weight:600;margin-bottom:10px">📅 Fecha de la primera cuota</p>'+
-            '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
-              '<input type="date" id="nc-fecha-primera" class="form-input" '+
-                'value="'+(ncFechaPrimeraCuota||'')+'" style="width:180px;font-size:14px" '+
-                'oninput="ncFechaPrimeraCuota=this.value;actualizarResumenCredito()">'+
-              '<div style="display:flex;gap:6px">'+
-                '<button class="btn btn-ghost btn-sm" onclick="setFechaPrimeraCuota(0)">Hoy</button>'+
-                '<button class="btn btn-ghost btn-sm" onclick="setFechaPrimeraCuota(1)">Mañana</button>'+
-                '<button class="btn btn-ghost btn-sm" onclick="setFechaPrimeraCuotaAuto()">Auto</button>'+
-              '</div>'+
-            '</div>'+
-            '<p style="font-size:11px;color:var(--muted);margin-top:6px">'+
-              (ncFechaPrimeraCuota ? '📅 Primera cuota: '+fmtDate(ncFechaPrimeraCuota) : '📅 Seleccioná una fecha o usá Auto')+
-            '</p>'+
-          '</div>'
+                    renderTipoCuotaHTML()
         )
       })()) +
 
@@ -3775,60 +3774,14 @@ function renderNuevoCredito() {
       '<div id="nc-clis" style="max-height:300px;overflow-y:auto">' + listHtml + '</div>' +
       '<div style="display:flex;gap:10px;margin-top:14px">' +
         '<button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="ncStep=1;renderNuevoCredito()">← Atrás</button>' +
-        '<button class="btn btn-primary" style="flex:2;justify-content:center" '+(ncClienteId?'':'disabled')+' onclick="ncStep=3;renderNuevoCredito()">Siguiente →</button>' +
+        '<button class="btn btn-primary" style="flex:2;justify-content:center;opacity:'+(ncClienteId?'1':'0.5')+'" onclick="ncPaso2Siguiente()">Siguiente →</button>' +
       '</div></div>'
   }
 
   // ── PASO 3: Confirmar
   else if (ncStep===3) {
-    const cli = DB.clientes.find(c=>c.id===ncClienteId)
-    const monto    = parseFloat(ncMonto)||0
-    const cuotasP3 = ncFrecuencia==='diario' ? ncCuotasManuales : ncCantCuotas
-    const tasa     = ncFrecuencia==='diario'
-      ? (DB.config['tasa_diario']||45)
-      : (DB.config['tasa_'+cuotasP3+'_cuotas']||0)
-    const tot   = monto*(1+tasa/100)
-    const mc    = tot/cuotasP3
-    const f1    = fechaCuotaNum(1, ncFrecuencia, ncDiasDiario, cuotasP3, ncPrimeraCuotaHoy, ncFechaPrimeraCuota||null)
-    const fLast = fechaCuotaNum(cuotasP3, ncFrecuencia, ncDiasDiario, cuotasP3, ncPrimeraCuotaHoy, ncFechaPrimeraCuota||null)
-    const fDescConf = frecuenciaDesc(ncFrecuencia, ncDiasDiario, cuotasP3)
-    const rows  = [
-      ['Descripción',       ncDescripcion||'(sin descripción)'],
-      ['Monto del crédito', fmtMoney(monto)],
-      ['TNA',               tasa+'%'],
-      ['Total financiado',  fmtMoney(tot)],
-      ['Frecuencia de pago',fDescConf],
-      ['Cuotas',            String(cuotasP3)],
-      ...(ncFrecuencia==='diario' ? [
-        ['Total cuotas',   String(ncCuotasManuales)+' cuotas diarias'],
-        ['Días de cobro',  getDiasCobro().map(d=>DIAS_SEMANA_NOMBRE[d]).join(', ')],
-        ['Días calendario',calcularDiasTotalesDiario(ncCuotasManuales, ncPrimeraCuotaHoy)+' días'],
-      ] : []),
-      ['1ra cuota vence', ncPrimeraCuotaHoy ? 'El mismo día (hoy)' : 'Al siguiente día hábil'],
-      ['Cantidad de cuotas',ncCantCuotas],
-      ['Monto por cuota',   fmtMoney(mc)],
-      ['1ra cuota',         fmtDate(f1)],
-      ['Última cuota',      fmtDate(fLast)],
-      ['Cliente',           cli?.nombreApellido||'?'],
-    ]
-    let rowsHtml = rows.map(([k,v])=>
-      '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bord);font-size:13px">' +
-        '<span style="color:var(--muted)">'+k+'</span><b>'+v+'</b></div>'
-    ).join('')
-    cont.innerHTML = '<div class="card">' +
-      '<h3 style="font-size:14px;font-weight:700;margin-bottom:16px">✅ Confirmar Crédito</h3>' +
-      rowsHtml +
-      '<div style="display:flex;gap:10px;margin-top:16px">' +
-        '<button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="ncStep=2;renderNuevoCredito()">← Atrás</button>' +
-        '<button class="btn btn-primary" style="flex:2;padding:12px;font-size:15px;justify-content:center" onclick="crearCredito()">✓ Confirmar Crédito</button>' +
-      '</div></div>'
+    renderPaso3()
   }
-}
-
-function filterNcClientes(b) {
-  $$('#nc-clis button').forEach(btn=>{
-    btn.style.display = btn.textContent.toLowerCase().includes(b.toLowerCase()) ? '' : 'none'
-  })
 }
 
 function ncSelCli(id) {
@@ -3859,6 +3812,8 @@ function crearCredito() {
     diasCobro:      ncFrecuencia==='diario' ? [...getDiasCobro()] : null,
     primeraCuotaHoy:ncPrimeraCuotaHoy,
     fechaPrimeraCuota: ncFechaPrimeraCuota || null,
+    tipoCuota: ncTipoCuota || 'vencida',
+    metodoPagoAdelantada: ncTipoCuota==='adelantada' ? (ncMetodoPagoAdel||'EFECTIVO') : null,
     tasaInteres:tasa, estado:'PENDIENTE_APROBACION',
     refinanciacionId:null, createdAt:new Date().toISOString()
   })
@@ -3878,13 +3833,13 @@ function crearCredito() {
     estado: newCr.estado,
     datos: JSON.stringify({diasTotales:newCr.diasTotales,diasCobro:newCr.diasCobro,
       primeraCuotaHoy:newCr.primeraCuotaHoy,fechaPrimeraCuota:newCr.fechaPrimeraCuota,
-      refinanciacionId:newCr.refinanciacionId})
+      tipoCuota:newCr.tipoCuota,metodoPagoAdelantada:newCr.metodoPagoAdelantada,refinanciacionId:newCr.refinanciacionId})
   }).catch(()=>{})
   guardarDB()
   showToast('⏳ Crédito enviado a aprobación')
   updateBadges()
   const savedCrId = crId
-  ncStep=1; ncClienteId=null; ncMonto=''; ncDescripcion=''; ncCantCuotas=12; ncDiasDiario=30; ncPrimeraCuotaHoy=false; ncCuotasManuales=30; ncFechaPrimeraCuota=''; ncFechaPrimeraCuota=''
+  ncStep=1; ncClienteId=null; ncMonto=''; ncDescripcion=''; ncCantCuotas=12; ncDiasDiario=30; ncPrimeraCuotaHoy=false; ncCuotasManuales=30; ncFechaPrimeraCuota=''; ncTipoCuota='vencida'; ncMetodoPagoAdel='EFECTIVO'; ncFechaPrimeraCuota=''; ncTipoCuota='vencida'; ncMetodoPagoAdel='EFECTIVO'
   goTo('aprobacion')
   // Generar contrato automáticamente
   setTimeout(()=>abrirContrato(savedCrId), 400)
@@ -3915,13 +3870,13 @@ function generarCuotasCredito(crId) {
       }
     } else {
       const dias = diasEntreCuotas(freq, cr.diasTotales||30, cr.cantidadCuotas)
-      if (cr.fechaPrimeraCuota && i === 0) {
-        // Use the manually set date for cuota 1
+      // For adelantada: cuota 1 is today, fechaPrimeraCuota applies to cuota 2
+      const baseIndex = cr.tipoCuota === 'adelantada' ? 1 : 0
+      if (cr.fechaPrimeraCuota && i === baseIndex) {
         fechaVenc = cr.fechaPrimeraCuota
       } else if (cr.fechaPrimeraCuota) {
-        // Calculate subsequent cuotas from the base date
         const base = new Date(cr.fechaPrimeraCuota + 'T00:00:00')
-        base.setDate(base.getDate() + dias * i)
+        base.setDate(base.getDate() + dias * (i - baseIndex))
         fechaVenc = base.toISOString().split('T')[0]
       } else {
         const f = new Date()
@@ -4588,8 +4543,48 @@ function aprobarCredito(crId) {
     monto_original:q.montoOriginal, monto_recargo:q.montoRecargo||0,
     fecha_vencimiento:q.fechaVencimiento, estado:q.estado, fecha_pago:q.fechaPago||null
   }))).catch(()=>{})
+  // Si el crédito tiene cuota adelantada: registrar cobro de cuota 1
+  if (cr.tipoCuota === 'adelantada') {
+    const q1 = DB.cuotas.find(q=>q.creditoId===crId && q.numeroCuota===1)
+    if (q1) {
+      const montoQ1 = parseFloat(q1.montoOriginal)
+      const metodo  = cr.metodoPagoAdelantada || 'EFECTIVO'
+      const cob = {
+        id:uid(), cuotaId:q1.id, usuarioId:cr.usuarioId||sesion.id,
+        montoCobrado:montoQ1, metodoPago:metodo,
+        referenciaPago:'Cuota adelantada',
+        esParcial:false, sinRecargo:false,
+        montoOriginalCuota:montoQ1,
+        anulada:false, anuladaPor:null, anuladaAt:null,
+        createdAt:new Date().toISOString()
+      }
+      DB.cobranzas.push(cob)
+      q1.estado  = 'PAGADA'
+      q1.fechaPago = new Date().toISOString().split('T')[0]
+      // Save cobranza + cuota state to Supabase
+      supaGuardar('cobranzas', {
+        id:cob.id, cuota_id:q1.id, usuario_id:cob.usuarioId,
+        monto_cobrado:montoQ1, metodo_pago:metodo, anulada:false,
+        datos:JSON.stringify({adelantada:true})
+      }).catch(()=>{})
+      supa('cuotas','PATCH',{estado:'PAGADA',fecha_pago:q1.fechaPago},`?id=eq.${q1.id}`).catch(()=>{})
+    }
+  }
+
   guardarDB()
-  showToast('✅ Crédito aprobado y cuotas generadas')
+  // Show comprobante if adelantada
+  if (cr.tipoCuota === 'adelantada') {
+    const q1final = DB.cuotas.find(q=>q.creditoId===crId && q.numeroCuota===1)
+    const cobFinal = DB.cobranzas.find(x=>x.cuotaId===q1final?.id && !x.anulada)
+    if (cobFinal) {
+      showToast('✅ Crédito aprobado — primera cuota cobrada')
+      setTimeout(()=>abrirComprobante(cobFinal.id), 800)
+    } else {
+      showToast('✅ Crédito aprobado y cuotas generadas')
+    }
+  } else {
+    showToast('✅ Crédito aprobado y cuotas generadas')
+  }
   updateBadges()
   renderAprobacion()
 }
@@ -6574,7 +6569,9 @@ async function cargarDesdeSupa() {
         diasCobro:       d.diasCobro      || null,
         primeraCuotaHoy: d.primeraCuotaHoy|| false,
         fechaPrimeraCuota: d.fechaPrimeraCuota || null,
-        refinanciacionId:d.refinanciacionId|| null
+        refinanciacionId:d.refinanciacionId|| null,
+        tipoCuota:          d.tipoCuota           || null,
+        metodoPagoAdelantada: d.metodoPagoAdelantada || null
       }
     })
 
@@ -7183,6 +7180,90 @@ function actualizarSidebarPermisos() {
       btn.style.display = hasPermiso(permiso) ? '' : 'none'
     }
   })
+}
+
+
+function ncPaso2Siguiente() {
+  if (!ncClienteId) { showToast('Seleccioná un cliente primero','⚠️'); return }
+  ncStep = 3
+  renderNuevoCredito()
+}
+
+
+function renderMetodoPagoAdelantada() {
+  if (ncTipoCuota !== 'adelantada') return ''
+  const metodos = [
+    {id:'EFECTIVO', icon:'💵', label:'Efectivo'},
+    {id:'TRANSFERENCIA', icon:'🏦', label:'Transferencia'},
+    {id:'DÉBITO', icon:'💳', label:'Débito'},
+  ]
+  const actual = ncMetodoPagoAdel || 'EFECTIVO'
+  let html = '<div style="background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.3);border-radius:12px;padding:14px;margin-top:14px">'
+  html += '<p style="font-size:12px;font-weight:700;color:var(--acc);margin-bottom:10px">⚡ Método de cobro — Primera cuota adelantada</p>'
+  html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'
+  metodos.forEach(m => {
+    const sel = actual === m.id
+    html += '<div onclick="ncMetodoPagoAdel=\'' + m.id + '\';renderNuevoCredito()" style="cursor:pointer;text-align:center;padding:10px 6px;border-radius:10px;border:2px solid ' + (sel?'var(--acc)':'var(--bord)') + ';background:' + (sel?'rgba(0,229,160,.1)':'var(--s2)') + '">'
+    html += '<div style="font-size:13px;font-weight:700;color:' + (sel?'var(--acc)':'var(--text)') + '">' + m.icon + ' ' + m.label + '</div>'
+    html += '</div>'
+  })
+  html += '</div></div>'
+  return html
+}
+
+
+function renderPaso3() {
+  try {
+  const cont = $('nc-step-content')
+  if (!cont) return
+  const cli      = DB.clientes.find(x=>x.id===ncClienteId)
+  const monto    = parseFloat(ncMonto)||0
+  const cuotasP3 = ncFrecuencia==='diario' ? ncCuotasManuales : ncCantCuotas
+  const tasa     = ncFrecuencia==='diario'
+    ? (DB.config['tasa_diario']||45)
+    : (DB.config['tasa_'+cuotasP3+'_cuotas']||0)
+  const tot   = monto*(1+tasa/100)
+  const mc    = cuotasP3 > 0 ? tot/cuotasP3 : 0
+  const f1    = fechaCuotaNum(1, ncFrecuencia, ncDiasDiario, cuotasP3, ncPrimeraCuotaHoy, ncFechaPrimeraCuota||null)
+  const fLast = fechaCuotaNum(cuotasP3, ncFrecuencia, ncDiasDiario, cuotasP3, ncPrimeraCuotaHoy, ncFechaPrimeraCuota||null)
+  const fDescConf = frecuenciaDesc(ncFrecuencia, ncDiasDiario, cuotasP3)
+
+  const rows = [
+    ['Descripción',       ncDescripcion||'(sin descripción)'],
+    ['Cliente',           cli?.nombreApellido||'?'],
+    ['Monto del crédito', fmtMoney(monto)],
+    ['TNA',               tasa+'%'],
+    ['Total financiado',  fmtMoney(tot)],
+    ['Frecuencia de pago',fDescConf],
+    ['Cantidad de cuotas',String(cuotasP3)],
+    ['Monto por cuota',   fmtMoney(mc)],
+    ['1ra cuota',         fmtDate(f1)],
+    ['Última cuota',      fmtDate(fLast)],
+    ['Tipo de cuota',     ncTipoCuota==='adelantada' ? '⚡ Adelantada (cuota 1 se cobra hoy)' : '📅 Vencida'],
+  ]
+
+  let rowsHtml = rows.map(([k,v])=>
+    `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bord);font-size:13px">
+      <span style="color:var(--muted)">${k}</span><b>${v}</b>
+    </div>`
+  ).join('')
+
+  const btnLabel = ncTipoCuota==='adelantada' ? '⚡ Crear y cobrar primera cuota' : '✓ Confirmar Crédito'
+
+  cont.innerHTML = `
+    <div class="card">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:16px">✅ Confirmar Crédito</h3>
+      ${rowsHtml}
+      ${renderMetodoPagoAdelantada()}
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="ncStep=2;renderNuevoCredito()">← Atrás</button>
+        <button class="btn btn-primary" style="flex:2;padding:12px;font-size:15px;justify-content:center" onclick="crearCredito()">${btnLabel}</button>
+      </div>
+    </div>`
+  } catch(err) {
+    console.error('renderPaso3 error:', err.message, err.stack)
+    $('nc-step-content').innerHTML = '<div class="card" style="color:var(--danger)"><p style="font-weight:700">Error: '+err.message+'</p><button class="btn btn-ghost btn-sm" onclick="ncStep=2;renderNuevoCredito()">← Volver</button></div>'
+  }
 }
 
 // ── cierre overlay en click fuera
