@@ -347,6 +347,18 @@ select.form-input option{background:var(--s2)}
 </style>
 </head>
 <body>
+<script>
+// ── Early firma check: run before any other JS to intercept ?firma= links
+(function() {
+  try {
+    const _p = new URLSearchParams(window.location.search)
+    if (_p.get('firma')) {
+      // Mark body so the rest of the app knows not to init normally
+      document.body.dataset.firmaMode = '1'
+    }
+  } catch(e) {}
+})()
+</script>
 
 <!-- ═══════════════════════════════════════════════
      LOGIN / AUTH SCREEN
@@ -1734,12 +1746,34 @@ select.form-input option{background:var(--s2)}
       <h3 class="modal-title">📄 Contrato de Crédito</h3>
       <button class="modal-close" onclick="closeModal('modal-contrato')">✕</button>
     </div>
-    <div id="contrato-preview" style="background:#fff;color:#000;padding:28px;border-radius:var(--r-sm);margin-bottom:16px;font-family:serif;line-height:1.6;max-height:400px;overflow-y:auto;font-size:13px"></div>
+    <div id="contrato-preview" style="background:#fff;color:#000;padding:28px;border-radius:var(--r-sm);margin-bottom:16px;font-family:serif;line-height:1.6;max-height:380px;overflow-y:auto;font-size:13px"></div>
+
+    <!-- ── FIRMA DIGITAL ── -->
+    <div id="firma-section" style="background:var(--s2);border-radius:var(--r-sm);padding:16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <p style="font-weight:700;font-size:13px">✍️ Firma digital del cliente</p>
+        <div style="display:flex;gap:6px">
+          <span id="firma-estado-badge" style="font-size:11px;padding:3px 10px;border-radius:20px;font-weight:700"></span>
+          <button class="btn btn-ghost btn-sm" onclick="limpiarFirma()" title="Borrar firma">🗑️ Limpiar</button>
+        </div>
+      </div>
+      <div style="position:relative;border:2px dashed var(--bord);border-radius:10px;background:#fff;overflow:hidden" id="firma-canvas-wrap">
+        <canvas id="firma-canvas" width="700" height="180" style="display:block;width:100%;height:160px;touch-action:none;cursor:crosshair"></canvas>
+        <p id="firma-placeholder" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#aaa;font-size:13px;pointer-events:none;white-space:nowrap">Firmar aquí con el mouse o dedo</p>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" id="btn-guardar-firma" onclick="guardarFirmaContrato()" style="flex:1;justify-content:center">💾 Guardar firma</button>
+        <button class="btn btn-ghost btn-sm" onclick="verFirmaGuardada()" id="btn-ver-firma" style="display:none">👁️ Ver firma guardada</button>
+      </div>
+      <p id="firma-guardada-fecha" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center"></p>
+    </div>
+
     <div class="modal-actions" style="flex-wrap:wrap;gap:8px">
       <button class="btn btn-ghost" onclick="closeModal('modal-contrato')">Cerrar</button>
       <button class="btn btn-ghost" onclick="imprimirContrato()">🖨️ Imprimir</button>
       <button class="btn btn-primary" onclick="descargarContratoPDF()">📥 Descargar PDF</button>
-      <button class="btn btn-wa" onclick="enviarContratoWA()">📲 Enviar por WhatsApp</button>
+      <button class="btn btn-wa" onclick="enviarContratoWA()">📲 Enviar contrato WA</button>
+      <button class="btn btn-wa" style="background:linear-gradient(135deg,#25d366,#128c7e)" onclick="enviarFirmaWhatsApp()">✍️ Enviar link para firmar</button>
     </div>
   </div>
 </div>
@@ -2469,12 +2503,16 @@ $('inp-user').addEventListener('keydown', e => e.key==='Enter' && $('inp-pass')?
 // ════════════════════════════════════════════════════
 function updateBadges() {
   actualizarEstadoCuotas()
-  const cobHoy = cuotasDelDia().length
-  const deudores = clientesDeudores().length
+  const _ub_admin = sesion?.esAdmin
+  const _ub_creds  = _ub_admin ? DB.creditos  : DB.creditos.filter(x=>x.usuarioId===sesion?.id)
+  const _ub_credIds = new Set(_ub_creds.map(x=>x.id))
+  const _ub_cuotas  = _ub_admin ? DB.cuotas    : DB.cuotas.filter(x=>_ub_credIds.has(x.creditoId))
+  const cobHoy = cuotasDelDia(_ub_cuotas).length
+  const deudores = clientesDeudores(_ub_cuotas, _ub_creds).length
   const dias = DB.config.dias_alerta_vencimiento
-  const alertas = cuotasProximas(dias).length
-  const pendAprobacion = DB.creditos.filter(c=>c.estado==='PENDIENTE_APROBACION').length
-  const proximas7 = cuotasEnRango(1,7).length
+  const alertas = cuotasProximas(dias, _ub_cuotas).length
+  const pendAprobacion = _ub_creds.filter(c=>c.estado==='PENDIENTE_APROBACION').length
+  const proximas7 = cuotasEnRango(1,7,_ub_cuotas).length
   $('badge-hoy').textContent = cobHoy
   $('badge-deudores').textContent = deudores
   $('badge-alertas').textContent = alertas
@@ -2495,24 +2533,28 @@ function cuotasEnRango(desdeDias, hastaDias) {
 
 function todayStr() { return new Date().toISOString().split('T')[0] }
 
-function cuotasDelDia() {
+function cuotasDelDia(cuotasScope) {
   const hoy = todayStr()
-  return DB.cuotas.filter(c => (c.estado==='PENDIENTE'||c.estado==='VENCIDA') && c.fechaVencimiento===hoy)
+  const src = cuotasScope || DB.cuotas
+  return src.filter(c => (c.estado==='PENDIENTE'||c.estado==='VENCIDA') && c.fechaVencimiento===hoy)
 }
 
-function clientesDeudores() {
+function clientesDeudores(cuotasScope, creditosScope) {
   const clientesConDeuda = new Set()
-  DB.cuotas.filter(c => c.estado==='VENCIDA').forEach(c => {
-    const cr = DB.creditos.find(x => x.id===c.creditoId)
+  const srcCuotas = cuotasScope || DB.cuotas
+  const srcCreditos = creditosScope || DB.creditos
+  srcCuotas.filter(c => c.estado==='VENCIDA').forEach(c => {
+    const cr = srcCreditos.find(x => x.id===c.creditoId)
     if (cr) clientesConDeuda.add(cr.clienteId)
   })
   return [...clientesConDeuda].map(id => DB.clientes.find(c => c.id===id)).filter(Boolean)
 }
 
-function cuotasProximas(dias) {
+function cuotasProximas(dias, cuotasScope) {
   const hoy = new Date(); hoy.setHours(0,0,0,0)
   const limite = new Date(hoy); limite.setDate(limite.getDate()+dias)
-  return DB.cuotas.filter(c => {
+  const src = cuotasScope || DB.cuotas
+  return src.filter(c => {
     if (c.estado !== 'PENDIENTE') return false
     const f = new Date(c.fechaVencimiento+'T12:00:00')
     return f > hoy && f <= limite
@@ -2524,6 +2566,14 @@ function cuotasProximas(dias) {
 // ════════════════════════════════════════════════════
 function renderDashboard() {
   detectarYActualizarMora()
+  // ── Scope: vendors only see their own data ──
+  const esAdmin = sesion?.esAdmin
+  const myCreditos  = esAdmin ? DB.creditos  : DB.creditos.filter(x=>x.usuarioId===sesion?.id)
+  const myCreditIds = new Set(myCreditos.map(x=>x.id))
+  const myCuotas    = esAdmin ? DB.cuotas    : DB.cuotas.filter(x=>myCreditIds.has(x.creditoId))
+  const myCuotaIds  = new Set(myCuotas.map(x=>x.id))
+  const myCobranzas = esAdmin ? DB.cobranzas : DB.cobranzas.filter(x=>myCuotaIds.has(x.cuotaId))
+  const myCliIds    = new Set(myCreditos.map(x=>x.clienteId))
   const h = new Date().getHours()
   const sal = h<12?'Buenos días':h<19?'Buenas tardes':'Buenas noches'
   const nombre = sesion?.nombreCompleto?.split(' ')[0]||''
@@ -2532,15 +2582,15 @@ function renderDashboard() {
 
   const hoy = todayStr()
   const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0)
-  const cobradoMes = DB.cobranzas.filter(c => !c.anulada && new Date(c.createdAt)>=inicioMes).reduce((s,c)=>s+parseFloat(c.montoCobrado),0)
-  const activos = DB.creditos.filter(c=>c.estado==='ACTIVO').length
-  const cobHoy = cuotasDelDia()
-  const morosos = clientesDeudores()
+  const cobradoMes = myCobranzas.filter(c => !c.anulada && new Date(c.createdAt)>=inicioMes).reduce((s,c)=>s+parseFloat(c.montoCobrado),0)
+  const activos = myCreditos.filter(c=>c.estado==='ACTIVO').length
+  const cobHoy = cuotasDelDia(myCuotas)
+  const morosos = clientesDeudores(myCuotas, myCreditos)
 
   $('ds-cobrado').textContent  = fmtMoney(cobradoMes)
-  $('ds-cobrados-cant').textContent = DB.cobranzas.filter(c=>!c.anulada&&new Date(c.createdAt)>=inicioMes).length + ' cobros'
+  $('ds-cobrados-cant').textContent = myCobranzas.filter(c=>!c.anulada&&new Date(c.createdAt)>=inicioMes).length + ' cobros'
   $('ds-activos').textContent  = activos
-  const pendAprobDash = DB.creditos.filter(c=>c.estado==='PENDIENTE_APROBACION').length
+  const pendAprobDash = myCreditos.filter(c=>c.estado==='PENDIENTE_APROBACION').length
   $('ds-pend-aprobacion').textContent = pendAprobDash>0 ? `⏳ ${pendAprobDash} pend. aprobación` : ''
   $('ds-hoy').textContent      = cobHoy.length
   $('ds-hoy-monto').textContent = cobHoy.length ? fmtMoney(cobHoy.reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)) : ''
@@ -2566,7 +2616,7 @@ function renderDashboard() {
   dList.innerHTML = morosos.length===0
     ? `<div class="card" style="text-align:center;padding:20px;color:var(--muted)">✅ Sin clientes atrasados</div>`
     : morosos.slice(0,3).map(cli => {
-      const cuotasVenc = DB.cuotas.filter(c=>c.estado==='VENCIDA' && DB.creditos.find(cr=>cr.id===c.creditoId&&cr.clienteId===cli.id))
+      const cuotasVenc = myCuotas.filter(c=>c.estado==='VENCIDA' && myCreditos.find(cr=>cr.id===c.creditoId&&cr.clienteId===cli.id))
       const total = cuotasVenc.reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
       const dias = Math.max(...cuotasVenc.map(c=>Math.floor((new Date()-new Date(c.fechaVencimiento+'T12:00:00'))/(86400000))))
       const ini = cli.nombreApellido.split(' ').map(n=>n[0]).slice(0,2).join('')
@@ -2584,15 +2634,15 @@ function renderDashboard() {
 function renderCobrosHoy() {
   const buscar = $('s-cobros')?.value?.toLowerCase()||''
   const hoy = todayStr()
-  let cuotas = DB.cuotas.filter(c => (c.estado==='PENDIENTE'||c.estado==='VENCIDA') && c.fechaVencimiento===hoy)
+  let cuotas = _myCuotas2.filter(c => (c.estado==='PENDIENTE'||c.estado==='VENCIDA') && c.fechaVencimiento===hoy)
   if (buscar) cuotas = cuotas.filter(c => {
     const cr=DB.creditos.find(x=>x.id===c.creditoId)
     const cli=DB.clientes.find(x=>x.id===cr?.clienteId)
     return cli?.nombreApellido?.toLowerCase().includes(buscar)
   })
   $('ch-pend').textContent = cuotas.length
-  $('ch-cob').textContent  = DB.cobranzas.filter(c=>!c.anulada&&new Date(c.createdAt).toISOString().split('T')[0]===hoy).length
-  $('ch-venc').textContent = DB.cuotas.filter(c=>c.estado==='VENCIDA').length
+  $('ch-cob').textContent  = _myCobr2.filter(c=>!c.anulada&&new Date(c.createdAt).toISOString().split('T')[0]===hoy).length
+  $('ch-venc').textContent = _myCuotas2.filter(c=>c.estado==='VENCIDA').length
 
   const tb = $('tbl-cobros-hoy')
   tb.innerHTML = cuotas.length===0
@@ -2846,7 +2896,11 @@ function marcarEnviado(msgId) {
 function renderDeudores() {
   if (!requirePermiso('ver_clientes','page-deudores')) return
   detectarYActualizarMora()
-  const morosos = clientesDeudores()
+  // Scope to user's own credits
+  const _esAdmD = sesion?.esAdmin
+  const _myCredsD = _esAdmD ? DB.creditos : DB.creditos.filter(x=>x.usuarioId===sesion?.id)
+  const _myCuotasD = _esAdmD ? DB.cuotas : DB.cuotas.filter(x=>new Set(_myCredsD.map(c=>c.id)).has(x.creditoId))
+  const morosos = clientesDeudores(_myCuotasD, _myCredsD)
   let totalDeuda=0, totalDias=0
   const items = morosos.map(cli => {
     const cuotasV = DB.cuotas.filter(c=>c.estado==='VENCIDA'&&DB.creditos.find(cr=>cr.id===c.creditoId&&cr.clienteId===cli.id))
@@ -3333,6 +3387,7 @@ function verCredito(id) {
         <button class="btn btn-ghost btn-sm" onclick="imprimirCalendario('${id}')">🖨️ Imprimir calendario</button>
         <button class="btn btn-wa btn-sm" onclick="enviarCalendarioWA('${id}')">📲 Enviar por WhatsApp</button>
         <button class="btn btn-ghost btn-sm" onclick="abrirContrato('${id}')">📄 Ver contrato</button>
+      ${cr.firmaData ? '<span class="chip chip-green" style="margin-left:4px;font-size:11px">🔏 Firmado</span>' : '<span class="chip chip-warn" style="margin-left:4px;font-size:11px">⚠️ Sin firma</span>'}
       </div>
     </div>
     <div class="tbl-wrap" style="max-height:300px;overflow-y:auto">
@@ -5388,7 +5443,7 @@ function renderInformes() {
     ['Total cobrado hoy', fmtMoney(totalCobradoHoy), 'c-green'],
     ['Cantidad de pagos', cobrosHoy.length, 'c-blue'],
     ['Créditos cobrados', new Set(cobrosHoy.map(cb=>DB.cuotas.find(q=>q.id===cb.cuotaId)?.creditoId)).size, 'c-orange'],
-    ['Pendiente del día', fmtMoney((dataCobrosHoyTotal())), 'c-warn'],
+    ['Pendiente del día', fmtMoney(dataCobrosHoyTotal(_myCuotasInf)), 'c-warn'],
   ].map(([l,v,c])=>`<div style="background:var(--s2);border-radius:var(--r-sm);padding:12px">
     <p style="font-size:11px;color:var(--muted);margin-bottom:4px">${l}</p>
     <p style="font-family:'Syne',sans-serif;font-weight:800;font-size:18px" class="${c}">${v}</p>
@@ -5415,6 +5470,7 @@ function renderInformes() {
 
   // ── Historial de pagos con todos los filtros aplicados
   const creditosIds = new Set(creds.map(c=>c.id))
+  const _myCuotasInf = DB.cuotas.filter(q=>creditosIds.has(q.creditoId))
   let pagos = DB.cobranzas.filter(cb=>{
     const q = DB.cuotas.find(x=>x.id===cb.cuotaId)
     return q && creditosIds.has(q.creditoId)
@@ -5447,8 +5503,8 @@ function renderInformes() {
       }).join('')
 }
 
-function dataCobrosHoyTotal() {
-  return cuotasDelDia().reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+function dataCobrosHoyTotal(cuotasScope) {
+  return cuotasDelDia(cuotasScope).reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
 }
 
 function exportarPDF() {
@@ -5513,7 +5569,9 @@ function generarTextoContrato(crId) {
     hoy,
     crId,
     diasTotales: cr.diasTotales || null,
-    msgComprobante: emp.mensajeComprobante || ''
+    msgComprobante: emp.mensajeComprobante || '',
+    firmaData:  cr.firmaData  || null,
+    firmaFecha: cr.firmaFecha || null
   }
 }
 
@@ -5541,7 +5599,11 @@ function abrirContrato(crId) {
       return '<div style="white-space:pre-wrap;font-family:serif;font-size:13px;line-height:1.8">' + txt + '</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:28px">' +
           '<div style="text-align:center"><div style="border-top:1px solid #000;padding-top:6px;font-size:11px">Firma del Prestador<br><b>' + dat.empresa + '</b></div></div>' +
-          '<div style="text-align:center"><div style="border-top:1px solid #000;padding-top:6px;font-size:11px">Firma del Prestatario/a<br><b>' + dat.titular + ' - DNI ' + dat.dni + '</b></div></div>' +
+          '<div style="text-align:center"><div style="border-top:1px solid #000;padding-top:6px;font-size:11px">' +
+          (dat.firmaData ? '<img src="'+dat.firmaData+'" style="display:block;max-width:160px;height:60px;object-fit:contain;margin:0 auto 4px">' : '') +
+          'Firma del Prestatario/a<br><b>' + dat.titular + ' - DNI ' + dat.dni + '</b>' +
+          (dat.firmaFecha ? '<br><span style="font-size:9px;color:#888">'+new Date(dat.firmaFecha).toLocaleString('es-AR')+'</span>' : '') +
+          '</div></div>' +
         '</div>' +
         (dat.msgComprobante ? '<p style="font-size:10px;text-align:center;margin-top:16px;color:#666;border-top:1px solid #eee;padding-top:8px">' + dat.msgComprobante + '</p>' : '')
     }
@@ -5577,6 +5639,15 @@ function abrirContrato(crId) {
   }
   $('contrato-preview').innerHTML = renderContratoHtml(d)
   openModal('modal-contrato')
+  // Init signature canvas
+  setTimeout(() => {
+    limpiarFirma()
+    initFirmaCanvas()
+    actualizarFirmaEstado()
+    // If already signed, show it
+    const _crFirma = DB.creditos.find(x=>x.id===contratoActualCrId)
+    if (_crFirma?.firmaData) verFirmaGuardada()
+  }, 100)
 }
 
 function imprimirContrato() {
@@ -5679,6 +5750,15 @@ function descargarContratoPDF() {
     doc.text('Firma Prestador', M, y); doc.text(d.empresa, M, y+4)
     doc.text('Firma Prestatario/a', W-M-70, y)
     doc.text(d.titular+' - DNI '+d.dni, W-M-70, y+4, {maxWidth:70})
+    // Embed digital signature image if exists
+    if (d.firmaData) {
+      try {
+        doc.addImage(d.firmaData, 'PNG', W-M-70, y-18, 60, 16)
+        doc.setFontSize(7); doc.setTextColor(100,100,100)
+        doc.text('Firmado digitalmente: '+(d.firmaFecha ? new Date(d.firmaFecha).toLocaleString('es-AR') : '—'), W-M-70, y+10, {maxWidth:70})
+        doc.setTextColor(0,0,0)
+      } catch(e) {}
+    }
 
     if (d.msgComprobante) {
       y += 20
@@ -5718,6 +5798,441 @@ function enviarContratoWA() {
   window.open(url, '_blank')
   logActividad('ENVIO_CONTRATO_WA','Créditos','EXITOSA',{creditoId:contratoActualCrId, celular:d.celular})
   showToast('📲 WhatsApp abierto con el contrato')
+}
+
+
+// ════════════════════════════════════════════════════
+// FIRMA DIGITAL
+// ════════════════════════════════════════════════════
+let firmaDrawing = false
+let firmaEmpty   = true
+let firmaCtx     = null
+
+function initFirmaCanvas() {
+  const canvas = $('firma-canvas')
+  if (!canvas) return
+  firmaCtx = canvas.getContext('2d')
+  firmaCtx.strokeStyle = '#1a1a2e'
+  firmaCtx.lineWidth   = 2.5
+  firmaCtx.lineCap     = 'round'
+  firmaCtx.lineJoin    = 'round'
+
+  const getPos = (e) => {
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width  / rect.width
+    const scaleY = canvas.height / rect.height
+    const src = e.touches ? e.touches[0] : e
+    return {
+      x: (src.clientX - rect.left) * scaleX,
+      y: (src.clientY - rect.top)  * scaleY
+    }
+  }
+
+  const startDraw = (e) => {
+    e.preventDefault()
+    firmaDrawing = true
+    const p = getPos(e)
+    firmaCtx.beginPath()
+    firmaCtx.moveTo(p.x, p.y)
+    $('firma-placeholder').style.opacity = '0'
+  }
+
+  const draw = (e) => {
+    if (!firmaDrawing) return
+    e.preventDefault()
+    const p = getPos(e)
+    firmaCtx.lineTo(p.x, p.y)
+    firmaCtx.stroke()
+    firmaEmpty = false
+  }
+
+  const endDraw = () => { firmaDrawing = false }
+
+  canvas.addEventListener('mousedown',  startDraw)
+  canvas.addEventListener('mousemove',  draw)
+  canvas.addEventListener('mouseup',    endDraw)
+  canvas.addEventListener('mouseleave', endDraw)
+  canvas.addEventListener('touchstart', startDraw, { passive: false })
+  canvas.addEventListener('touchmove',  draw,      { passive: false })
+  canvas.addEventListener('touchend',   endDraw)
+}
+
+function limpiarFirma() {
+  if (!firmaCtx) return
+  const canvas = $('firma-canvas')
+  firmaCtx.clearRect(0, 0, canvas.width, canvas.height)
+  firmaEmpty = true
+  $('firma-placeholder').style.opacity = '1'
+}
+
+function actualizarFirmaEstado() {
+  if (!contratoActualCrId) return
+  const cr = DB.creditos.find(x=>x.id===contratoActualCrId)
+  const badge = $('firma-estado-badge')
+  const btnVer = $('btn-ver-firma')
+  const fechaEl = $('firma-guardada-fecha')
+  if (!badge) return
+
+  if (cr?.firmaData) {
+    badge.textContent = '✅ Firmado'
+    badge.style.background = 'rgba(0,229,160,.15)'
+    badge.style.color = 'var(--acc)'
+    if (btnVer) btnVer.style.display = ''
+    if (fechaEl) fechaEl.textContent = '📅 Firmado el ' + (cr.firmaFecha ? new Date(cr.firmaFecha).toLocaleString('es-AR') : '—')
+  } else {
+    badge.textContent = '⚠️ Sin firma'
+    badge.style.background = 'rgba(255,160,0,.1)'
+    badge.style.color = 'var(--warn)'
+    if (btnVer) btnVer.style.display = 'none'
+    if (fechaEl) fechaEl.textContent = ''
+  }
+}
+
+function guardarFirmaContrato() {
+  if (!contratoActualCrId) return
+  if (firmaEmpty) { showToast('Primero dibujá la firma del cliente','⚠️'); return }
+
+  const canvas = $('firma-canvas')
+  const dataUrl = canvas.toDataURL('image/png')
+  const cr = DB.creditos.find(x=>x.id===contratoActualCrId)
+  if (!cr) return
+
+  cr.firmaData   = dataUrl
+  cr.firmaFecha  = new Date().toISOString()
+  cr.firmaUsuarioId = sesion?.id
+
+  // Save to Supabase
+  const datosActual = cr.datos ? JSON.parse(JSON.stringify(cr.datos)) : {}
+  datosActual.firmaData  = dataUrl
+  datosActual.firmaFecha = cr.firmaFecha
+  supa('creditos','PATCH',
+    { datos: JSON.stringify({ ...datosActual, tipoCuota: cr.tipoCuota, metodoPagoAdelantada: cr.metodoPagoAdelantada, firmaData: dataUrl, firmaFecha: cr.firmaFecha }) },
+    `?id=eq.${cr.id}`
+  ).catch(()=>{})
+
+  guardarDB()
+  actualizarFirmaEstado()
+  showToast('✅ Firma guardada correctamente')
+  registrarAuditoria('FIRMA_CONTRATO','credito',cr.id,{ cliente: DB.clientes.find(x=>x.id===cr.clienteId)?.nombreApellido })
+}
+
+function verFirmaGuardada() {
+  const cr = DB.creditos.find(x=>x.id===contratoActualCrId)
+  if (!cr?.firmaData) return
+  // Show saved signature in canvas
+  const canvas = $('firma-canvas')
+  const img = new Image()
+  img.onload = () => {
+    limpiarFirma()
+    firmaCtx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    firmaEmpty = false
+    $('firma-placeholder').style.opacity = '0'
+  }
+  img.src = cr.firmaData
+}
+
+
+// ════════════════════════════════════════════════════
+// FIRMA REMOTA — Link por WhatsApp para firmar desde celular
+// ════════════════════════════════════════════════════
+let frToken      = null   // token from URL
+let frCreditoId  = null   // resolved credito id
+let frDrawing    = false
+let frEmpty      = true
+let frCtx        = null
+
+// ── Check on app load if we have a ?firma= param
+function checkFirmaRemota() {
+  const params = new URLSearchParams(window.location.search)
+  const token  = params.get('firma')
+  if (!token) return false
+  frToken = token
+  // Hide login screen and main app, show only firma page
+  const loginScreen = $('login-screen')
+  const appScreen   = $('app')
+  const firmaPage   = $('firma-remota-page')
+  if (loginScreen) loginScreen.style.display = 'none'
+  if (appScreen)   appScreen.style.display   = 'none'
+  if (firmaPage)   firmaPage.style.display   = 'block'
+  document.body.style.background = '#0d0f16'
+  document.body.style.overflow   = 'auto'
+  // Load contract data
+  cargarContratoRemoto(token)
+  return true
+}
+
+async function cargarContratoRemoto(token) {
+  const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado'].forEach(x => $(x).style.display = x===id?'block':'none')
+  fr_show('fr-loading')
+
+  try {
+    // 1. Search credito by token using text search on datos column
+    const resp = await fetch(
+      SUPA_URL + '/rest/v1/creditos?datos=ilike.*' + encodeURIComponent(token) + '*&select=*',
+      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+    )
+    if (!resp.ok) throw new Error('Error ' + resp.status)
+    const rows = await resp.json()
+
+    // Verify token matches exactly (ilike could match substring)
+    const cr = rows.find(x => {
+      try { return (JSON.parse(x.datos||'{}')).firmaToken === token } catch { return false }
+    })
+
+    if (!cr) { fr_show('fr-error'); return }
+
+    frCreditoId = cr.id
+    const datos = JSON.parse(cr.datos || '{}')
+
+    // Already signed?
+    if (datos.firmaData) {
+      fr_show('fr-ya-firmado')
+      const fecha = datos.firmaFecha ? new Date(datos.firmaFecha).toLocaleString('es-AR') : '—'
+      $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + fecha
+      return
+    }
+
+    // 2. Fetch empresa and cliente in parallel
+    const empId = cr.empresa_id
+    const [empResp, cliResp] = await Promise.all([
+      fetch(SUPA_URL+'/rest/v1/empresas?id=eq.'+empId+'&select=*', { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } }),
+      fetch(SUPA_URL+'/rest/v1/clientes?id=eq.'+cr.cliente_id+'&select=*', { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } })
+    ])
+    const empArr = empResp.ok ? await empResp.json() : []
+    const cliArr = cliResp.ok ? await cliResp.json() : []
+    const emp = empArr[0] || {}
+    const cli = cliArr[0] || {}
+
+    // Populate UI
+    if (emp.nombre) $('fr-empresa').textContent = emp.nombre
+    if (emp.logo) {
+      const img = $('fr-logo')
+      img.src = emp.logo
+      img.style.display = 'block'
+    }
+
+    $('fr-titulo').textContent = cr.descripcion || 'Contrato de Crédito Personal'
+
+    const fmt = (n) => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(n||0)
+    const fmtDate2 = (s) => s ? new Date(s+'T12:00:00').toLocaleDateString('es-AR') : '—'
+
+    const filas = [
+      ['👤 Titular',           cli.nombre_apellido || cli.nombreApellido || '—'],
+      ['🪪 DNI',               cli.dni || '—'],
+      ['💰 Monto del crédito', fmt(cr.monto)],
+      ['📊 Total a pagar',     fmt(cr.total_con_intereses || cr.monto)],
+      ['📅 Cuotas',            (cr.cantidad_cuotas||cr.cantidadCuotas||'—') + ' cuotas'],
+      ['📆 Primera cuota',     fmtDate2(cr.fecha_primera_cuota || cr.fechaPrimeraCuota)],
+      ['📋 Estado',            cr.estado||'—'],
+    ]
+
+    $('fr-datos').innerHTML = filas.map(([k,v]) =>
+      `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2a2d3e;padding:7px 0;font-size:13px">
+        <span style="color:#888">${k}</span>
+        <b style="text-align:right;max-width:55%">${v}</b>
+      </div>`
+    ).join('')
+
+    // Contrato text (use plantilla if available)
+    // plantillaContrato may be in emp.config JSON or as top-level field
+    let _empConfig = {}
+    try { _empConfig = JSON.parse(emp.config||'{}') } catch {}
+    const plantilla = (emp.plantilla_contrato || _empConfig.plantillaContrato || datos.plantillaContrato || '').toString()
+    if (plantilla) {
+      let txt = plantilla
+        .replace(/{{empresa}}/gi, emp.nombre||'—')
+        .replace(/{{cuit}}/gi, emp.cuit||'—')
+        .replace(/{{titular}}/gi, cli.nombre_apellido||cli.nombreApellido||'—')
+        .replace(/{{dni}}/gi, cli.dni||'—')
+        .replace(/{{monto}}/gi, fmt(cr.monto))
+        .replace(/{{fecha}}/gi, new Date().toLocaleDateString('es-AR'))
+        .replace(/\n/g, '<br>')
+      $('fr-contrato-text').innerHTML = txt
+    }
+
+    $('fr-loading').style.display = 'none'
+    $('fr-content').style.display = 'block'
+
+    // Init canvas
+    setTimeout(initFirmaRemotaCanvas, 100)
+
+  } catch(err) {
+    console.error('Error cargando contrato remoto:', err)
+    $('fr-loading').style.display = 'none'
+    $('fr-error').style.display = 'block'
+  }
+}
+
+function toggleFrContrato(btn) {
+  const box = $('fr-contrato-text')
+  const arrow = $('fr-contrato-arrow')
+  const showing = box.style.display !== 'none'
+  box.style.display = showing ? 'none' : 'block'
+  arrow.textContent = showing ? '▼' : '▲'
+}
+
+function initFirmaRemotaCanvas() {
+  const canvas = $('fr-canvas')
+  if (!canvas) return
+  frCtx = canvas.getContext('2d')
+  frCtx.strokeStyle = '#1a1a2e'
+  frCtx.lineWidth   = 3
+  frCtx.lineCap     = 'round'
+  frCtx.lineJoin    = 'round'
+
+  const getPos = (e) => {
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width  / rect.width
+    const scaleY = canvas.height / rect.height
+    const src = e.touches ? e.touches[0] : e
+    return { x:(src.clientX-rect.left)*scaleX, y:(src.clientY-rect.top)*scaleY }
+  }
+
+  const start = (e) => {
+    e.preventDefault(); frDrawing=true
+    const p=getPos(e); frCtx.beginPath(); frCtx.moveTo(p.x,p.y)
+    $('fr-canvas-hint').style.opacity='0'
+  }
+  const draw = (e) => {
+    if(!frDrawing) return; e.preventDefault()
+    const p=getPos(e); frCtx.lineTo(p.x,p.y); frCtx.stroke(); frEmpty=false
+  }
+  const end = () => { frDrawing=false }
+
+  canvas.addEventListener('mousedown', start)
+  canvas.addEventListener('mousemove', draw)
+  canvas.addEventListener('mouseup', end)
+  canvas.addEventListener('mouseleave', end)
+  canvas.addEventListener('touchstart', start, {passive:false})
+  canvas.addEventListener('touchmove',  draw,  {passive:false})
+  canvas.addEventListener('touchend',   end)
+}
+
+function limpiarFirmaRemota() {
+  if (!frCtx) return
+  const canvas = $('fr-canvas')
+  frCtx.clearRect(0,0,canvas.width,canvas.height)
+  frEmpty = true
+  $('fr-canvas-hint').style.opacity='1'
+}
+
+async function enviarFirmaRemota() {
+  if (frEmpty) {
+    alert('Por favor, dibujá tu firma antes de continuar.')
+    return
+  }
+  if (!frCreditoId) return
+
+  const btn = $('fr-btn-firmar')
+  btn.disabled = true
+  btn.textContent = '⏳ Guardando firma...'
+
+  try {
+    const canvas = $('fr-canvas')
+    const firmaData  = canvas.toDataURL('image/png')
+    const firmaFecha = new Date().toISOString()
+
+    // Fetch current datos to preserve existing fields
+    const resp = await fetch(
+      SUPA_URL+'/rest/v1/creditos?id=eq.'+frCreditoId+'&select=datos',
+      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } }
+    )
+    const arr = resp.ok ? await resp.json() : []
+    const datosActual = arr[0]?.datos
+      ? (typeof arr[0].datos==='string' ? JSON.parse(arr[0].datos) : arr[0].datos)
+      : {}
+
+    // Merge firma into datos
+    const datosNuevo = {
+      ...datosActual,
+      firmaData,
+      firmaFecha,
+      firmadoDesde: 'whatsapp_link',
+    }
+
+    // PATCH to Supabase
+    const patch = await fetch(
+      SUPA_URL+'/rest/v1/creditos?id=eq.'+frCreditoId,
+      {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPA_KEY,
+          'Authorization': 'Bearer '+SUPA_KEY,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ datos: JSON.stringify(datosNuevo) })
+      }
+    )
+
+    if (!patch.ok) throw new Error('Error al guardar')
+
+    // Show success
+    $('fr-content').style.display = 'none'
+    $('fr-ya-firmado').style.display = 'block'
+    $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
+
+  } catch(err) {
+    console.error('Error guardando firma:', err)
+    btn.disabled = false
+    btn.textContent = '✅ Confirmar y firmar contrato'
+    alert('Hubo un error al guardar la firma. Intentá de nuevo.')
+  }
+}
+
+// ── Generate firma token and send via WhatsApp ──────────────────────────────
+function generarTokenFirma(crId) {
+  // Simple token: timestamp + random
+  return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2,8)
+}
+
+function enviarFirmaWhatsApp() {
+  if (!contratoActualCrId) return
+  const cr  = DB.creditos.find(x=>x.id===contratoActualCrId)
+  const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
+  if (!cli?.celular) { showToast('El cliente no tiene celular registrado','⚠️'); return }
+
+  // Generate or reuse token
+  let token = cr.firmaToken
+  if (!token) {
+    token = generarTokenFirma(contratoActualCrId)
+    cr.firmaToken = token
+    // Save token to Supabase in datos
+    const datosActual = {}
+    try { Object.assign(datosActual, JSON.parse(cr.datos||'{}')) } catch {}
+    datosActual.firmaToken = token
+    supa('creditos','PATCH',
+      { datos: JSON.stringify({ ...datosActual, tipoCuota:cr.tipoCuota, firmaToken:token }) },
+      `?id=eq.${cr.id}`
+    ).catch(()=>{})
+    guardarDB()
+  }
+
+  const baseUrl = window.location.origin + window.location.pathname
+  const link    = `${baseUrl}?firma=${token}`
+  const empresa = DB.empresa.nombre || 'CréditoFácil'
+  const monto   = new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(cr.monto||0)
+
+  const msg = [
+    `✍️ *Firma digital de contrato — ${empresa}*`,
+    '',
+    `Hola ${cli.nombreApellido.split(' ')[0]} 👋`,
+    '',
+    `Te enviamos el link para firmar digitalmente tu contrato de crédito:`,
+    `📋 *${cr.descripcion || 'Crédito personal'}* — ${monto}`,
+    '',
+    `👇 *Firmá desde tu celular:*`,
+    link,
+    '',
+    `_Al firmar, aceptás los términos del contrato._`,
+    `_${empresa}_`,
+  ].join('\n')
+
+  const tel = cli.celular.replace(/[^0-9]/g,'')
+  const telFmt = tel.startsWith('0') ? '54'+tel.slice(1) : tel.startsWith('54') ? tel : '54'+tel
+  window.open(`https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`, '_blank')
+  showToast('📲 WhatsApp abierto con el link de firma')
+  registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido, token})
 }
 
 // ════════════════════════════════════════════════════
@@ -6591,7 +7106,10 @@ async function cargarDesdeSupa() {
         fechaPrimeraCuota: d.fechaPrimeraCuota || null,
         refinanciacionId:d.refinanciacionId|| null,
         tipoCuota:          d.tipoCuota           || null,
-        metodoPagoAdelantada: d.metodoPagoAdelantada || null
+        metodoPagoAdelantada: d.metodoPagoAdelantada || null,
+        firmaToken:  d.firmaToken  || null,
+        firmaData:   d.firmaData   || null,
+        firmaFecha:  d.firmaFecha  || null
       }
     })
 
@@ -7288,6 +7806,11 @@ function renderPaso3() {
 
 // ── cierre overlay en click fuera
 $$('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{ if(e.target===o) o.classList.remove('open') }))
+
+// ── Check for ?firma= URL param on load (firma remota via WhatsApp)
+document.addEventListener('DOMContentLoaded', () => { checkFirmaRemota() })
+// Also check immediately in case DOMContentLoaded already fired
+if (document.readyState !== 'loading') checkFirmaRemota()
 </script>
 
 <script>
@@ -7386,4 +7909,75 @@ async function instalarApp() {
 }
 </script>
 </body>
-</html>
+</html<!-- ════════════════════════════════════════════
+     FIRMA REMOTA (accessible without login)
+     ════════════════════════════════════════════ -->
+<div id="firma-remota-page" style="display:none;min-height:100vh;background:#0d0f16;font-family:'DM Sans',sans-serif;color:#fff">
+  <div style="max-width:480px;margin:0 auto;padding:24px 16px">
+    <!-- Header -->
+    <div style="text-align:center;padding:24px 0 16px">
+      <img id="fr-logo" src="" style="max-height:60px;max-width:200px;object-fit:contain;display:none;margin:0 auto 12px">
+      <h2 id="fr-empresa" style="font-size:18px;font-weight:800;color:#00e5a0;margin-bottom:4px"></h2>
+      <p style="font-size:12px;color:#888">Firma digital de contrato de crédito</p>
+    </div>
+
+    <!-- Loading state -->
+    <div id="fr-loading" style="text-align:center;padding:40px 0">
+      <div style="width:40px;height:40px;border:3px solid #333;border-top-color:#00e5a0;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px"></div>
+      <p style="color:#888">Cargando contrato...</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="fr-error" style="display:none;text-align:center;padding:40px 16px">
+      <p style="font-size:40px;margin-bottom:12px">❌</p>
+      <h3 style="color:#ff4060;margin-bottom:8px">Link inválido o expirado</h3>
+      <p style="color:#888;font-size:13px">Este link de firma ya no es válido.<br>Solicitá uno nuevo a tu asesor.</p>
+    </div>
+
+    <!-- Already signed state -->
+    <div id="fr-ya-firmado" style="display:none;text-align:center;padding:40px 16px">
+      <p style="font-size:48px;margin-bottom:12px">✅</p>
+      <h3 style="color:#00e5a0;margin-bottom:8px">¡Contrato ya firmado!</h3>
+      <p id="fr-ya-firmado-fecha" style="color:#888;font-size:13px"></p>
+      <p style="color:#888;font-size:12px;margin-top:12px">Podés cerrar esta ventana.</p>
+    </div>
+
+    <!-- Contract + Signature state -->
+    <div id="fr-content" style="display:none">
+      <!-- Contract summary card -->
+      <div style="background:#1a1d2e;border-radius:16px;padding:20px;margin-bottom:16px;border:1px solid #2a2d3e">
+        <h3 id="fr-titulo" style="font-size:16px;font-weight:700;margin-bottom:14px;color:#fff"></h3>
+        <div id="fr-datos" style="display:grid;gap:8px"></div>
+      </div>
+
+      <!-- Contract text (collapsible) -->
+      <div style="margin-bottom:16px">
+        <button onclick="toggleFrContrato(this)" style="width:100%;background:#1a1d2e;border:1px solid #2a2d3e;border-radius:12px;padding:12px 16px;color:#00e5a0;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+          <span>📄 Ver texto completo del contrato</span><span id="fr-contrato-arrow">▼</span>
+        </button>
+        <div id="fr-contrato-text" style="display:none;background:#fff;color:#000;border-radius:0 0 12px 12px;padding:20px;font-family:serif;font-size:12px;line-height:1.6;max-height:300px;overflow-y:auto"></div>
+      </div>
+
+      <!-- Signature canvas -->
+      <div style="background:#1a1d2e;border-radius:16px;padding:20px;margin-bottom:16px;border:1px solid #2a2d3e">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <p style="font-weight:700;font-size:14px">✍️ Tu firma</p>
+          <button onclick="limpiarFirmaRemota()" style="background:none;border:1px solid #333;border-radius:8px;padding:6px 12px;color:#888;font-size:12px;cursor:pointer">🗑️ Limpiar</button>
+        </div>
+        <div style="border:2px dashed #333;border-radius:12px;background:#fff;overflow:hidden;position:relative">
+          <canvas id="fr-canvas" width="700" height="200" style="display:block;width:100%;height:180px;touch-action:none;cursor:crosshair"></canvas>
+          <p id="fr-canvas-hint" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;font-size:13px;pointer-events:none;white-space:nowrap">Firmá aquí con tu dedo</p>
+        </div>
+        <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">Al firmar, confirmás haber leído y aceptado los términos del crédito</p>
+      </div>
+
+      <!-- Submit button -->
+      <button id="fr-btn-firmar" onclick="enviarFirmaRemota()" style="width:100%;background:#00e5a0;border:none;border-radius:14px;padding:18px;font-size:16px;font-weight:700;color:#000;cursor:pointer;margin-bottom:12px">
+        ✅ Confirmar y firmar contrato
+      </button>
+      <p style="font-size:11px;color:#555;text-align:center">Esta firma tiene validez contractual. La fecha y hora quedan registradas.</p>
+    </div>
+  </div>
+</div>
+
+>
