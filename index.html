@@ -3353,8 +3353,11 @@ function verCredito(id) {
               <div style="display:flex;gap:4px;flex-wrap:wrap">
               ${(q.estado==='PENDIENTE'||q.estado==='VENCIDA')&&cr.estado==='ACTIVO'?
                 `<button class="btn btn-primary btn-sm" onclick="closeModal('modal-ver-cliente');abrirCobro('${q.id}')">Cobrar</button>`:
-                cb?`<small style="color:var(--acc)">${chipMetodo(cb.metodoPago)}</small><br>
-                <button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="abrirAnular('${cb.id}')">Anular</button>`:''}
+                cb?`<small style="color:var(--acc)">${chipMetodo(cb.metodoPago)}</small>
+                <div style="display:flex;gap:4px;margin-top:4px">
+                  <button class="btn btn-ghost btn-sm" title="Reimprimir comprobante" onclick="abrirComprobante('${cb.id}')">🧾</button>
+                  <button class="btn btn-danger btn-sm" onclick="abrirAnular('${cb.id}')">Anular</button>
+                </div>`:''}
               ${sesion?.esAdmin&&(q.estado==='PENDIENTE'||q.estado==='VENCIDA')?
                 `<button class="btn btn-ghost btn-sm" style="margin-top:2px" onclick="abrirModFecha('${q.id}')">📅</button>`:''}
               </div>
@@ -4164,6 +4167,7 @@ function renderAuditoria() {
             <p style="font-size:11px;color:var(--muted)">${d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}</p>
           </div>
         </div>
+        ${ev.tipoEvento==='COBRO'&&ev.entidadId?`<div style="margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="abrirComprobante('${ev.entidadId}')">🧾 Reimprimir comprobante</button></div>`:''}
         ${ev.detalle?`<div class="audit-detail">${JSON.stringify(ev.detalle,null,2)}</div>`:''}
       </div>`
     }).join('')
@@ -5301,6 +5305,15 @@ function renderInformes() {
   // Populate user filter
   const selUser = $('inf-fil-user')
   if (!selUser) return
+  // Solo admins pueden filtrar por usuario
+  if (!sesion?.esAdmin) {
+    // Ocultar el filtro de usuario para vendedores
+    const userFiltroDiv = selUser.closest('.form-group') || selUser.parentElement
+    if (userFiltroDiv) userFiltroDiv.style.display = 'none'
+  } else {
+    const userFiltroDiv = selUser.closest('.form-group') || selUser.parentElement
+    if (userFiltroDiv) userFiltroDiv.style.display = ''
+  }
   const curUser = selUser.value
   selUser.innerHTML = '<option value="">Todos</option>' +
     DB.usuarios.map(u=>`<option value="${u.id}" ${curUser===u.id?'selected':''}>${u.nombreCompleto}</option>`).join('')
@@ -5311,8 +5324,10 @@ function renderInformes() {
   const filEstado = $('inf-fil-estado').value
   const filCli    = ($('inf-fil-cliente')?.value||'').toLowerCase()
 
-  let creds = DB.creditos
-  if (filUser)   creds = creds.filter(c=>c.usuarioId===filUser)
+  // Vendedores solo ven sus propios datos
+  const esAdmin = sesion?.esAdmin
+  let creds = esAdmin ? DB.creditos : DB.creditos.filter(c=>c.usuarioId===sesion?.id)
+  if (esAdmin && filUser) creds = creds.filter(c=>c.usuarioId===filUser)
   if (filEstado) creds = creds.filter(c=>c.estado===filEstado)
   if (filDesde)  creds = creds.filter(c=>c.createdAt>=filDesde)
   if (filHasta)  creds = creds.filter(c=>c.createdAt<=filHasta+'T23:59:59')
@@ -5333,7 +5348,7 @@ function renderInformes() {
     const pend = DB.cuotas.filter(q=>q.creditoId===c.id&&q.estado!=='PAGADA'&&q.estado!=='CANCELADA').reduce((a,q)=>a+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo),0)
     return s+pend
   },0)
-  const totalMora = DB.cuotas.filter(q=>q.estado==='VENCIDA').reduce((s,q)=>s+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo),0)
+  const totalMora = DB.cuotas.filter(q=>q.estado==='VENCIDA'&&myCreditIds.has(q.creditoId)).reduce((s,q)=>s+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo),0)
   const totalCancelados = creds.filter(c=>c.estado==='CANCELADO').length
 
   $('inf-totales').innerHTML = [
@@ -5346,11 +5361,14 @@ function renderInformes() {
 
   // Cobros del día
   const hoyStr = todayStr()
-  const cobrosHoy = DB.cobranzas.filter(cb=>!cb.anulada&&cb.createdAt.startsWith(hoyStr))
+  // Filter cobros hoy by user's own creditos
+  const myCreditIds = new Set(creds.map(cr=>cr.id))
+  const myCuotaIds  = new Set(DB.cuotas.filter(q=>myCreditIds.has(q.creditoId)).map(q=>q.id))
+  let cobrosHoy = DB.cobranzas.filter(cb=>!cb.anulada&&cb.createdAt.startsWith(hoyStr)&&myCuotaIds.has(cb.cuotaId))
   const totalCobradoHoy = cobrosHoy.reduce((s,cb)=>s+parseFloat(cb.montoCobrado||0),0)
   $('inf-cobros-dia-resumen').textContent = `Total: ${fmtMoney(totalCobradoHoy)} · ${cobrosHoy.length} pagos`
   $('tbl-inf-cobros-dia').innerHTML = cobrosHoy.length===0
-    ? `<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted)">Sin cobros hoy</td></tr>`
+    ? `<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--muted)">Sin cobros hoy</td></tr>`
     : cobrosHoy.map(cb=>{
       const cuota = DB.cuotas.find(q=>q.id===cb.cuotaId)
       const cred  = DB.creditos.find(x=>x.id===cuota?.creditoId)
@@ -5362,7 +5380,8 @@ function renderInformes() {
         <td style="color:var(--muted);font-size:12px">${prodDesc||'?'}</td>
         <td><b style="color:var(--acc)">${fmtMoney(cb.montoCobrado)}</b>${cb.esParcial?'<span class="chip chip-warn" style="font-size:10px;margin-left:4px">Parcial</span>':''}</td>
         <td>${chipMetodo(cb.metodoPago)}</td>
-        <td style="color:var(--muted);font-size:12px">${usr?.nombreCompleto||'?'}</td></tr>`
+        <td style="color:var(--muted);font-size:12px">${usr?.nombreCompleto||'?'}</td>
+        <td><button class="btn btn-ghost btn-sm" title="Reimprimir comprobante" onclick="abrirComprobante('${cb.id}')">🧾</button></td></tr>`
     }).join('')
 
   $('inf-resumen-dia').innerHTML = [
@@ -5423,6 +5442,7 @@ function renderInformes() {
           <td>${chipMetodo(cb.metodoPago)}</td>
           <td style="color:var(--muted);font-size:12px">${usr?.nombreCompleto||'?'}</td>
           <td>${cb.anulada?'<span class="chip chip-red">Anulado</span>':'<span class="chip chip-green">Cobrado</span>'}</td>
+          <td>${!cb.anulada?`<button class="btn btn-ghost btn-sm" title="Reimprimir comprobante" onclick="abrirComprobante('${cb.id}')">🧾</button>`:''}</td>
         </tr>`
       }).join('')
 }
