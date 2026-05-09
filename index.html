@@ -5964,20 +5964,60 @@ function checkFirmaRemota() {
 async function cargarContratoRemoto(token) {
   const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado'].forEach(x => $(x).style.display = x===id?'block':'none')
   fr_show('fr-loading')
+  console.log('🔍 Buscando contrato con token:', token)
 
   try {
-    // 1. Search credito by token using text search on datos column
-    const resp = await fetch(
-      SUPA_URL + '/rest/v1/creditos?datos=ilike.*' + encodeURIComponent(token) + '*&select=*',
-      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
-    )
-    if (!resp.ok) throw new Error('Error ' + resp.status)
-    const rows = await resp.json()
+    // Search credito by firmaToken - try multiple Supabase query strategies
+    let cr = null
 
-    // Verify token matches exactly (ilike could match substring)
-    const cr = rows.find(x => {
-      try { return (JSON.parse(x.datos||'{}')).firmaToken === token } catch { return false }
-    })
+    // Strategy 1: JSONB contains operator (works if datos is jsonb column)
+    try {
+      const q1 = await fetch(
+        SUPA_URL + '/rest/v1/creditos?datos=cs.' + encodeURIComponent('{"firmaToken":"' + token + '"}') + '&select=*',
+        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+      )
+      if (q1.ok) {
+        const rows1 = await q1.json()
+        cr = rows1.find(x => {
+          try { const d=JSON.parse(x.datos||'{}'); return d.firmaToken===token } catch { return false }
+        })
+      }
+    } catch(e1) { console.warn('Strategy 1 failed:', e1) }
+
+    // Strategy 2: ilike text search (works if datos is text column)
+    if (!cr) {
+      try {
+        const q2 = await fetch(
+          SUPA_URL + '/rest/v1/creditos?datos=ilike.*' + encodeURIComponent(token) + '*&select=*',
+          { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+        )
+        if (q2.ok) {
+          const rows2 = await q2.json()
+          cr = rows2.find(x => {
+            try { const d=JSON.parse(x.datos||'{}'); return d.firmaToken===token } catch { return false }
+          })
+        }
+      } catch(e2) { console.warn('Strategy 2 failed:', e2) }
+    }
+
+    // Strategy 3: Fetch all creditos and search client-side (last resort)
+    if (!cr) {
+      const q3 = await fetch(
+        SUPA_URL + '/rest/v1/creditos?select=id,datos,cliente_id,empresa_id,descripcion,monto,total_financiado,cantidad_cuotas,fecha_primera_cuota,estado',
+        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+      )
+      if (!q3.ok) throw new Error('Error ' + q3.status)
+      const rows3 = await q3.json()
+      console.log('📋 Strategy 3: fetched', rows3.length, 'creditos')
+      cr = rows3.find(x => {
+        try { 
+          const d=JSON.parse(x.datos||'{}')
+          if (d.firmaToken) console.log('  found token:', d.firmaToken, '=== match:', d.firmaToken===token)
+          return d.firmaToken===token 
+        } catch { return false }
+      })
+      console.log('📋 Strategy 3 result:', cr ? 'FOUND id='+cr.id : 'NOT FOUND')
+    }
 
     if (!cr) { fr_show('fr-error'); return }
 
@@ -6198,17 +6238,23 @@ function enviarFirmaWhatsApp() {
     token = generarTokenFirma(contratoActualCrId)
     cr.firmaToken = token
     // Save token to Supabase in datos
+    // Build datos object from all available credito fields + token
     const datosActual = {}
-    try { Object.assign(datosActual, JSON.parse(cr.datos||'{}')) } catch {}
+    if (cr.datos && typeof cr.datos === 'object') Object.assign(datosActual, cr.datos)
+    else try { Object.assign(datosActual, JSON.parse(cr.datos||'{}')) } catch {}
+    // Include existing metadata
+    if (cr.tipoCuota) datosActual.tipoCuota = cr.tipoCuota
+    if (cr.metodoPagoAdelantada) datosActual.metodoPagoAdelantada = cr.metodoPagoAdelantada
     datosActual.firmaToken = token
-    supa('creditos','PATCH',
-      { datos: JSON.stringify({ ...datosActual, tipoCuota:cr.tipoCuota, firmaToken:token }) },
-      `?id=eq.${cr.id}`
-    ).catch(()=>{})
+    const datosStr = JSON.stringify(datosActual)
+    // PATCH to Supabase - wait for it to confirm before showing link
+    supa('creditos','PATCH', { datos: datosStr }, `?id=eq.${cr.id}`)
+      .then(() => console.log('✓ firmaToken saved to Supabase'))
+      .catch(e => console.error('Error saving firmaToken:', e))
     guardarDB()
   }
 
-  const baseUrl = window.location.origin + window.location.pathname
+  const baseUrl = window.location.href.split('?')[0].split('#')[0]
   const link    = `${baseUrl}?firma=${token}`
   const empresa = DB.empresa.nombre || 'CréditoFácil'
   const monto   = new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(cr.monto||0)
@@ -7107,9 +7153,10 @@ async function cargarDesdeSupa() {
         refinanciacionId:d.refinanciacionId|| null,
         tipoCuota:          d.tipoCuota           || null,
         metodoPagoAdelantada: d.metodoPagoAdelantada || null,
-        firmaToken:  d.firmaToken  || null,
-        firmaData:   d.firmaData   || null,
-        firmaFecha:  d.firmaFecha  || null
+        // firmaToken, firmaData, firmaFecha are inside the datos JSON column
+        firmaToken:  (()=>{ try { return JSON.parse(d.datos||'{}').firmaToken||null } catch{return null} })(),
+        firmaData:   (()=>{ try { return JSON.parse(d.datos||'{}').firmaData||null  } catch{return null} })(),
+        firmaFecha:  (()=>{ try { return JSON.parse(d.datos||'{}').firmaFecha||null } catch{return null} })()
       }
     })
 
