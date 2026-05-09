@@ -5964,197 +5964,81 @@ function checkFirmaRemota() {
 async function cargarContratoRemoto(token) {
   const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado'].forEach(x => $(x).style.display = x===id?'block':'none')
   fr_show('fr-loading')
-  console.log('🔍 Buscando contrato con token:', token)
 
   try {
-    // Search credito by firmaToken - try multiple Supabase query strategies
-    let cr = null
-
-    // Strategy 1: JSONB contains operator (works if datos is jsonb column)
+    // Decode the self-contained payload from base64 URL param
+    let payload = null
     try {
-      const q1 = await fetch(
-        SUPA_URL + '/rest/v1/creditos?datos=cs.' + encodeURIComponent('{"firmaToken":"' + token + '"}') + '&select=*',
-        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
-      )
-      if (q1.ok) {
-        const rows1 = await q1.json()
-        cr = rows1.find(x => {
-          try { const d=JSON.parse(x.datos||'{}'); return d.firmaToken===token } catch { return false }
-        })
-      }
-    } catch(e1) { console.warn('Strategy 1 failed:', e1) }
-
-    // Strategy 2: ilike text search (works if datos is text column)
-    if (!cr) {
-      try {
-        const q2 = await fetch(
-          SUPA_URL + '/rest/v1/creditos?datos=ilike.*' + encodeURIComponent(token) + '*&select=*',
-          { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
-        )
-        if (q2.ok) {
-          const rows2 = await q2.json()
-          cr = rows2.find(x => {
-            try { const d=JSON.parse(x.datos||'{}'); return d.firmaToken===token } catch { return false }
-          })
-        }
-      } catch(e2) { console.warn('Strategy 2 failed:', e2) }
-    }
-
-    // Strategy 3: Fetch all creditos and search client-side (last resort)
-    if (!cr) {
-      const q3 = await fetch(
-        SUPA_URL + '/rest/v1/creditos?select=id,datos,cliente_id,empresa_id,descripcion,monto,total_financiado,cantidad_cuotas,fecha_primera_cuota,estado',
-        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
-      )
-      if (!q3.ok) throw new Error('Error ' + q3.status)
-      const rows3 = await q3.json()
-      console.log('📋 Strategy 3: fetched', rows3.length, 'creditos')
-      cr = rows3.find(x => {
-        try { 
-          const d=JSON.parse(x.datos||'{}')
-          if (d.firmaToken) console.log('  found token:', d.firmaToken, '=== match:', d.firmaToken===token)
-          return d.firmaToken===token 
-        } catch { return false }
-      })
-      console.log('📋 Strategy 3 result:', cr ? 'FOUND id='+cr.id : 'NOT FOUND')
-    }
-
-    if (!cr) { fr_show('fr-error'); return }
-
-    frCreditoId = cr.id
-    const datos = JSON.parse(cr.datos || '{}')
-
-    // Already signed?
-    if (datos.firmaData) {
-      fr_show('fr-ya-firmado')
-      const fecha = datos.firmaFecha ? new Date(datos.firmaFecha).toLocaleString('es-AR') : '—'
-      $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + fecha
+      payload = JSON.parse(decodeURIComponent(escape(atob(token))))
+    } catch(e) {
+      console.error('Failed to decode firma token:', e)
+      fr_show('fr-error')
       return
     }
+    frCreditoId = payload.crId
+    console.log('✓ Payload decoded for:', payload.titular, '|', payload.descripcion)
 
-    // 2. Fetch empresa and cliente in parallel
-    const empId = cr.empresa_id
-    const [empResp, cliResp] = await Promise.all([
-      fetch(SUPA_URL+'/rest/v1/empresas?id=eq.'+empId+'&select=*', { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } }),
-      fetch(SUPA_URL+'/rest/v1/clientes?id=eq.'+cr.cliente_id+'&select=*', { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } })
-    ])
-    const empArr = empResp.ok ? await empResp.json() : []
-    const cliArr = cliResp.ok ? await cliResp.json() : []
-    const emp = empArr[0] || {}
-    const cli = cliArr[0] || {}
+    // Check if already signed (read from Supabase - may fail due to RLS, that's OK)
+    try {
+      const checkResp = await fetch(
+        SUPA_URL + '/rest/v1/creditos?id=eq.' + frCreditoId + '&select=datos',
+        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+      )
+      if (checkResp.ok) {
+        const rows = await checkResp.json()
+        const raw = rows[0]?.datos
+        if (raw) {
+          const d = typeof raw==='string' ? JSON.parse(raw) : raw
+          if (d.firmaData) {
+            fr_show('fr-ya-firmado')
+            $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + (d.firmaFecha ? new Date(d.firmaFecha).toLocaleString('es-AR') : '—')
+            return
+          }
+        }
+      }
+    } catch(e) { console.warn('RLS check failed (OK):', e.message) }
 
-    // Populate UI
-    if (emp.nombre) $('fr-empresa').textContent = emp.nombre
-    if (emp.logo) {
-      const img = $('fr-logo')
-      img.src = emp.logo
-      img.style.display = 'block'
-    }
+    // Populate UI from payload (no Supabase read needed)
+    if (payload.empresa) $('fr-empresa').textContent = payload.empresa
+    if (payload.logo) { const img=$('fr-logo'); img.src=payload.logo; img.style.display='block' }
 
-    $('fr-titulo').textContent = cr.descripcion || 'Contrato de Crédito Personal'
+    $('fr-titulo').textContent = payload.descripcion || 'Contrato de Crédito Personal'
 
-    const fmt = (n) => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(n||0)
     const fmtDate2 = (s) => s ? new Date(s+'T12:00:00').toLocaleDateString('es-AR') : '—'
-
     const filas = [
-      ['👤 Titular',           cli.nombre_apellido || cli.nombreApellido || '—'],
-      ['🪪 DNI',               cli.dni || '—'],
-      ['💰 Monto del crédito', fmt(cr.monto)],
-      ['📊 Total a pagar',     fmt(cr.total_con_intereses || cr.monto)],
-      ['📅 Cuotas',            (cr.cantidad_cuotas||cr.cantidadCuotas||'—') + ' cuotas'],
-      ['📆 Primera cuota',     fmtDate2(cr.fecha_primera_cuota || cr.fechaPrimeraCuota)],
-      ['📋 Estado',            cr.estado||'—'],
+      ['👤 Titular',   payload.titular  || '—'],
+      ['🪪 DNI',       payload.dni       || '—'],
+      ['💰 Monto',     payload.monto     || '—'],
+      ['💰 Total',     payload.total     || '—'],
+      ['📊 TNA',       payload.tna       || '—'],
+      ['📅 Cuotas',    (payload.cuotas||'—') + ' cuotas ' + (payload.frecuencia||'')],
+      ['📆 1ra cuota', fmtDate2(payload.primeraCuota)],
+      ['📌 Tipo',      payload.tipoCuota==='adelantada'?'⚡ Adelantada':'📅 Vencida'],
     ]
-
     $('fr-datos').innerHTML = filas.map(([k,v]) =>
       `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2a2d3e;padding:7px 0;font-size:13px">
-        <span style="color:#888">${k}</span>
-        <b style="text-align:right;max-width:55%">${v}</b>
-      </div>`
+        <span style="color:#888">${k}</span><b style="text-align:right;max-width:60%">${v}</b></div>`
     ).join('')
 
-    // Contrato text (use plantilla if available)
-    // plantillaContrato may be in emp.config JSON or as top-level field
-    let _empConfig = {}
-    try { _empConfig = JSON.parse(emp.config||'{}') } catch {}
-    const plantilla = (emp.plantilla_contrato || _empConfig.plantillaContrato || datos.plantillaContrato || '').toString()
-    if (plantilla) {
-      let txt = plantilla
-        .replace(/{{empresa}}/gi, emp.nombre||'—')
-        .replace(/{{cuit}}/gi, emp.cuit||'—')
-        .replace(/{{titular}}/gi, cli.nombre_apellido||cli.nombreApellido||'—')
-        .replace(/{{dni}}/gi, cli.dni||'—')
-        .replace(/{{monto}}/gi, fmt(cr.monto))
-        .replace(/{{fecha}}/gi, new Date().toLocaleDateString('es-AR'))
-        .replace(/\n/g, '<br>')
+    if (payload.plantilla) {
+      let txt = payload.plantilla
+        .replace(/{{empresa}}/gi, payload.empresa||'—').replace(/{{cuit}}/gi, payload.cuit||'—')
+        .replace(/{{titular}}/gi, payload.titular||'—').replace(/{{dni}}/gi, payload.dni||'—')
+        .replace(/{{monto}}/gi, payload.monto||'—').replace(/{{total}}/gi, payload.total||'—')
+        .replace(/{{cuotas}}/gi, String(payload.cuotas||'—'))
+        .replace(/{{fecha}}/gi, new Date().toLocaleDateString('es-AR')).replace(/\n/g, '<br>')
       $('fr-contrato-text').innerHTML = txt
     }
 
-    $('fr-loading').style.display = 'none'
-    $('fr-content').style.display = 'block'
-
-    // Init canvas
+    fr_show('fr-content')
     setTimeout(initFirmaRemotaCanvas, 100)
 
   } catch(err) {
     console.error('Error cargando contrato remoto:', err)
-    $('fr-loading').style.display = 'none'
-    $('fr-error').style.display = 'block'
+    fr_show('fr-error')
   }
 }
 
-function toggleFrContrato(btn) {
-  const box = $('fr-contrato-text')
-  const arrow = $('fr-contrato-arrow')
-  const showing = box.style.display !== 'none'
-  box.style.display = showing ? 'none' : 'block'
-  arrow.textContent = showing ? '▼' : '▲'
-}
-
-function initFirmaRemotaCanvas() {
-  const canvas = $('fr-canvas')
-  if (!canvas) return
-  frCtx = canvas.getContext('2d')
-  frCtx.strokeStyle = '#1a1a2e'
-  frCtx.lineWidth   = 3
-  frCtx.lineCap     = 'round'
-  frCtx.lineJoin    = 'round'
-
-  const getPos = (e) => {
-    const rect = canvas.getBoundingClientRect()
-    const scaleX = canvas.width  / rect.width
-    const scaleY = canvas.height / rect.height
-    const src = e.touches ? e.touches[0] : e
-    return { x:(src.clientX-rect.left)*scaleX, y:(src.clientY-rect.top)*scaleY }
-  }
-
-  const start = (e) => {
-    e.preventDefault(); frDrawing=true
-    const p=getPos(e); frCtx.beginPath(); frCtx.moveTo(p.x,p.y)
-    $('fr-canvas-hint').style.opacity='0'
-  }
-  const draw = (e) => {
-    if(!frDrawing) return; e.preventDefault()
-    const p=getPos(e); frCtx.lineTo(p.x,p.y); frCtx.stroke(); frEmpty=false
-  }
-  const end = () => { frDrawing=false }
-
-  canvas.addEventListener('mousedown', start)
-  canvas.addEventListener('mousemove', draw)
-  canvas.addEventListener('mouseup', end)
-  canvas.addEventListener('mouseleave', end)
-  canvas.addEventListener('touchstart', start, {passive:false})
-  canvas.addEventListener('touchmove',  draw,  {passive:false})
-  canvas.addEventListener('touchend',   end)
-}
-
-function limpiarFirmaRemota() {
-  if (!frCtx) return
-  const canvas = $('fr-canvas')
-  frCtx.clearRect(0,0,canvas.width,canvas.height)
-  frEmpty = true
-  $('fr-canvas-hint').style.opacity='1'
-}
 
 async function enviarFirmaRemota() {
   if (frEmpty) {
@@ -6172,15 +6056,19 @@ async function enviarFirmaRemota() {
     const firmaData  = canvas.toDataURL('image/png')
     const firmaFecha = new Date().toISOString()
 
-    // Fetch current datos to preserve existing fields
-    const resp = await fetch(
-      SUPA_URL+'/rest/v1/creditos?id=eq.'+frCreditoId+'&select=datos',
-      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } }
-    )
-    const arr = resp.ok ? await resp.json() : []
-    const datosActual = arr[0]?.datos
-      ? (typeof arr[0].datos==='string' ? JSON.parse(arr[0].datos) : arr[0].datos)
-      : {}
+    // Try to get existing datos (optional - fallback to empty)
+    let datosActual = {}
+    try {
+      const resp = await fetch(
+        SUPA_URL+'/rest/v1/creditos?id=eq.'+frCreditoId+'&select=datos',
+        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } }
+      )
+      if (resp.ok) {
+        const arr = await resp.json()
+        const raw = arr[0]?.datos
+        if (raw) datosActual = typeof raw==='string' ? JSON.parse(raw) : raw
+      }
+    } catch(e) { console.warn('Could not read existing datos:', e) }
 
     // Merge firma into datos
     const datosNuevo = {
