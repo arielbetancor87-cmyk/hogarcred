@@ -6056,55 +6056,73 @@ async function enviarFirmaRemota() {
     const firmaData  = canvas.toDataURL('image/png')
     const firmaFecha = new Date().toISOString()
 
-    // Try to get existing datos (optional - fallback to empty)
-    let datosActual = {}
-    try {
-      const resp = await fetch(
-        SUPA_URL+'/rest/v1/creditos?id=eq.'+frCreditoId+'&select=datos',
-        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } }
-      )
-      if (resp.ok) {
-        const arr = await resp.json()
-        const raw = arr[0]?.datos
-        if (raw) datosActual = typeof raw==='string' ? JSON.parse(raw) : raw
-      }
-    } catch(e) { console.warn('Could not read existing datos:', e) }
-
-    // Merge firma into datos
-    const datosNuevo = {
-      ...datosActual,
-      firmaData,
-      firmaFecha,
-      firmadoDesde: 'whatsapp_link',
-    }
-
-    // PATCH to Supabase
-    const patch = await fetch(
-      SUPA_URL+'/rest/v1/creditos?id=eq.'+frCreditoId,
+    // INSERT into 'firmas' table (requires anon INSERT policy in Supabase)
+    const resp = await fetch(
+      SUPA_URL + '/rest/v1/firmas',
       {
-        method: 'PATCH',
+        method: 'POST',
         headers: {
-          'apikey': SUPA_KEY,
-          'Authorization': 'Bearer '+SUPA_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
+          'apikey':        SUPA_KEY,
+          'Authorization': 'Bearer ' + SUPA_KEY,
+          'Content-Type':  'application/json',
+          'Prefer':        'return=minimal'
         },
-        body: JSON.stringify({ datos: JSON.stringify(datosNuevo) })
+        body: JSON.stringify({
+          credito_id: frCreditoId,
+          firma_data: firmaData,
+          firma_fecha: firmaFecha,
+          firmado_desde: 'whatsapp_link'
+        })
       }
     )
 
-    if (!patch.ok) throw new Error('Error al guardar')
+    if (!resp.ok) {
+      const errText = await resp.text()
+      throw new Error(`${resp.status}: ${errText}`)
+    }
 
     // Show success
-    $('fr-content').style.display = 'none'
-    $('fr-ya-firmado').style.display = 'block'
+    const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado'].forEach(x => $(x).style.display = x===id?'block':'none')
+    fr_show('fr-ya-firmado')
     $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
 
   } catch(err) {
     console.error('Error guardando firma:', err)
     btn.disabled = false
     btn.textContent = '✅ Confirmar y firmar contrato'
-    alert('Hubo un error al guardar la firma. Intentá de nuevo.')
+    alert('Error al guardar la firma: ' + err.message + '\n\nAsegurate de que el administrador configuró la tabla de firmas en Supabase.')
+  }
+}
+
+
+// ── Sync firma from 'firmas' table back into creditos ──────────────────────
+async function sincronizarFirmasRemota() {
+  // For each active credito, check if there's a firma in the 'firmas' table
+  // that hasn't been applied yet
+  try {
+    const resp = await supa('firmas', 'GET', null, '?select=*&order=firma_fecha.desc')
+    if (!Array.isArray(resp)) return
+    resp.forEach(firma => {
+      const cr = DB.creditos.find(x=>x.id===firma.credito_id)
+      if (cr && !cr.firmaData) {
+        cr.firmaData  = firma.firma_data
+        cr.firmaFecha = firma.firma_fecha
+        cr.firmaToken = null // consumed
+        // Update Supabase creditos datos
+        const datosActual = {}
+        try { Object.assign(datosActual, JSON.parse(cr.datos||'{}')) } catch {}
+        datosActual.firmaData  = firma.firma_data
+        datosActual.firmaFecha = firma.firma_fecha
+        supa('creditos','PATCH',
+          { datos: JSON.stringify({ ...datosActual, firmaData: firma.firma_data, firmaFecha: firma.firma_fecha }) },
+          `?id=eq.${cr.id}`
+        ).catch(()=>{})
+        console.log('✅ Firma remota sincronizada para:', cr.descripcion)
+      }
+    })
+    guardarDB()
+  } catch(e) {
+    console.warn('No se pudo sincronizar firmas (tabla no existe aún):', e.message)
   }
 }
 
