@@ -221,13 +221,20 @@ select.form-input option{background:var(--s2)}
 @keyframes moraPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,64,96,.3)}50%{box-shadow:0 0 0 6px rgba(255,64,96,0)}}
 
 /* ── MOBILE NAV ── */
-.mobile-nav{display:none;position:fixed;top:0;left:0;right:0;background:rgba(13,15,22,.97);border-bottom:1px solid rgba(255,255,255,.07);z-index:200;box-shadow:0 4px 24px rgba(0,0,0,.5);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding-top:env(safe-area-inset-top,0)}
-.mobile-nav-items{display:flex;justify-content:space-around}
+.mobile-nav{display:none;position:fixed;top:0;left:0;right:0;background:rgba(13,15,22,.97);border-bottom:1px solid rgba(255,255,255,.07);z-index:200;box-shadow:0 2px 20px rgba(0,0,0,.4);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding-top:env(safe-area-inset-top,0)}
+.mobile-nav-items{display:none} /* tabs moved to mob-bottom-bar */
 .m-nav-btn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 6px;background:none;border:none;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
 .m-nav-btn.active{color:var(--acc);border-bottom-color:var(--acc)}
 .m-nav-btn:hover{color:var(--text)}
 .m-nav-icon{font-size:20px;line-height:1.1}
 .m-nav-lbl{font-size:9px;font-weight:700;font-family:'Syne',sans-serif;letter-spacing:.3px;text-transform:uppercase}
+.mob-tab-btn{display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 8px;background:none;border:none;cursor:pointer;color:var(--muted);min-width:56px;touch-action:manipulation;transition:color .15s}
+.mob-tab-btn.active{color:var(--acc)}
+.mob-tab-btn:active{opacity:.7}
+.mob-tab-cobrar{margin-top:-4px;padding-bottom:0}
+.mob-tab-lbl{font-size:9px;font-weight:700;font-family:'Syne',sans-serif;letter-spacing:.3px;text-transform:uppercase}
+.mob-menu-item{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bord);border-radius:14px;padding:14px 8px;cursor:pointer;font-size:12px;font-weight:700;color:var(--text);touch-action:manipulation;transition:background .15s}
+.mob-menu-item:active{background:var(--s3)}
 
 /* ── LOGIN ── */
 #login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;position:relative;overflow:hidden}
@@ -261,88 +268,158 @@ select.form-input option{background:var(--s2)}
 
 /* ── RESPONSIVE ── */
 @media(max-width:860px){
-  /* ── Layout ── */
+  /* ══ LAYOUT ══ */
   .sidebar{display:none}
   .mobile-nav{display:block}
+  #mob-bottom-bar{display:block}
   #app-header{display:none}
   #banner-guardado{display:none!important}
-  .page{padding:152px 14px calc(24px + env(safe-area-inset-bottom,0px))}
+  .main-area{margin-left:0}
 
-  /* ── Typography ── */
-  .page-title{font-size:22px;font-weight:800}
+  /* ══ PAGE PADDING — accounts for top nav height ══ */
+  .page{padding:62px 12px calc(72px + env(safe-area-inset-bottom,0px)) 12px}
 
-  /* ── Grids → single column ── */
-  .stats-grid{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-  .two-col,.form-grid,.form-grid-3,.config-grid,.perm-grid{grid-template-columns:1fr;gap:12px}
-  .col-span-2{grid-column:span 1}
-  .plan-grid{grid-template-columns:repeat(2,1fr);gap:8px}
-  .clientes-grid{grid-template-columns:1fr!important}
+  /* ══ TYPOGRAPHY ══ */
+  .page-title{font-size:20px;font-weight:800;margin-bottom:0}
+  h2{font-size:18px}
+  h3{font-size:15px}
 
-  /* ── Clientes grid → list style ── */
-  #clientes-grid{grid-template-columns:1fr!important;gap:8px}
+  /* ══ TOPBAR ══ */
+  .topbar{flex-direction:column;align-items:stretch;gap:8px;margin-bottom:14px}
+  .topbar>*{width:100%}
+  .topbar .search-wrap{flex:1;width:100%}
+  .topbar .btn{min-height:44px;font-size:14px;width:100%;justify-content:center}
+  .topbar .btn-sm{min-height:40px}
 
-  /* ── Tables: hide extra cols ── */
-  thead th:nth-child(n+4){display:none}
-  td:nth-child(n+4){display:none}
-
-  /* ── Cards ── */
-  .card{padding:14px;border-radius:12px}
-  .stat-card{padding:14px 16px;border-radius:12px}
-
-  /* ── Topbar ── */
-  .topbar{margin-bottom:16px;gap:8px}
-  .topbar .btn{min-height:40px;font-size:13px}
-
-  /* ── Inputs & buttons: larger touch targets ── */
-  .form-input{padding:12px 14px;font-size:15px;border-radius:10px;min-height:46px}
-  .form-label{font-size:13px;font-weight:700;margin-bottom:6px;display:block}
-  select.form-input{min-height:46px}
-  textarea.form-input{min-height:80px}
-  .btn{padding:11px 18px;font-size:14px;font-weight:700;min-height:44px;border-radius:10px}
-  .btn-sm{padding:8px 14px;font-size:12px;min-height:36px}
-  .btn-primary{width:100%;justify-content:center}
-
-  /* ── Modals ── */
-  .modal{padding:20px 16px;border-radius:16px 16px 0 0;position:fixed;bottom:0;left:0;right:0;max-height:92vh;margin:0;width:100%;animation:slideUp .25s ease}
-  .modal-overlay{align-items:flex-end}
-  .modal-lg,.modal-md,.modal-sm{max-width:100%}
-  .modal-header{margin-bottom:16px}
-  .modal-title{font-size:17px}
-  .modal-actions{flex-direction:column;gap:8px}
-  .modal-actions .btn{width:100%;justify-content:center}
-
-  /* ── Search bar ── */
-  .search-wrap input{font-size:15px;min-height:42px}
-
-  /* ── Tables: bigger rows ── */
-  td,th{padding:10px 8px;font-size:13px}
-  td:first-child{font-size:14px;font-weight:700}
-
-  /* ── Stat cards ── */
-  .stat-val{font-size:32px!important}
+  /* ══ STAT CARDS ══ */
+  .stats-grid{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+  .stat-card{padding:14px 12px;border-radius:14px}
+  .stat-val{font-size:26px!important;line-height:1.1}
   .stat-lbl{font-size:11px!important}
 
-  /* ── Cobro/accion buttons always visible ── */
-  .topbar{flex-direction:column;align-items:stretch}
-  .topbar>div{width:100%}
-  .topbar .search-wrap{flex:1}
+  /* ══ GRIDS → 1 col ══ */
+  .two-col,.form-grid,.form-grid-3,.config-grid,.perm-grid{grid-template-columns:1fr;gap:10px}
+  .col-span-2{grid-column:span 1}
+  .plan-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .clientes-grid,#clientes-grid{grid-template-columns:1fr!important;gap:8px}
 
-  /* ── Buttons: primary always full width ── */
-  .btn-primary{width:100%;justify-content:center}
-  .btn-primary.btn-sm{width:auto}
+  /* ══ TABLES ══ */
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:12px}
+  table{min-width:0;font-size:13px}
+  td,th{padding:10px 8px;font-size:12px;white-space:nowrap}
+  td:first-child{font-weight:700;font-size:13px}
+  /* Hide columns beyond 3 on small tables */
+  .tbl-compact thead th:nth-child(n+4){display:none}
+  .tbl-compact td:nth-child(n+4){display:none}
 
-  /* ── Modals: slide up from bottom (sheet style) ── */
+  /* ══ CARDS ══ */
+  .card{padding:14px 12px;border-radius:14px;margin-bottom:10px}
+  .card+.card{margin-top:0}
+
+  /* ══ FORMS ══ */
+  .form-input{padding:12px 14px;font-size:15px;border-radius:10px;min-height:46px}
+  .form-label{font-size:13px;font-weight:700;margin-bottom:5px;display:block}
+  select.form-input{min-height:46px;font-size:15px}
+  textarea.form-input{min-height:90px;font-size:15px}
+
+  /* ══ BUTTONS ══ */
+  .btn{padding:11px 16px;font-size:14px;font-weight:700;min-height:44px;border-radius:10px;touch-action:manipulation}
+  .btn-sm{padding:8px 12px;font-size:12px;min-height:36px}
+  .btn-primary{justify-content:center}
+  .btn-block-mobile{width:100%;justify-content:center}
+
+  /* ══ MODALS — slide up as bottom sheet ══ */
   .modal-overlay{align-items:flex-end!important}
-  .modal{border-radius:20px 20px 0 0!important;padding:20px 16px 28px!important;animation:slideUp .25s cubic-bezier(.32,.72,0,1)!important}
+  .modal{
+    padding:20px 16px calc(20px + env(safe-area-inset-bottom,0px)) 16px!important;
+    border-radius:20px 20px 0 0!important;
+    position:fixed;bottom:0;left:0;right:0;width:100%!important;
+    max-width:100%!important;max-height:94vh;margin:0!important;
+    overflow-y:auto;animation:slideUp .28s cubic-bezier(.32,.72,0,1)!important
+  }
   .modal-lg,.modal-md,.modal-sm{max-width:100%!important}
+  .modal-header{margin-bottom:14px}
+  .modal-title{font-size:17px;font-weight:800}
+  .modal-actions{flex-direction:column;gap:8px}
+  .modal-actions .btn{width:100%;justify-content:center;min-height:46px}
+
+  /* ══ MODAL TABS ══ */
+  .modal-tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;gap:4px;padding-bottom:2px}
+  .modal-tab{white-space:nowrap;padding:8px 12px;font-size:13px}
+
+  /* ══ COBRO MODAL ══ */
+  .cobro-tipo-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .cobro-tipo-card{padding:14px 10px;border-radius:12px}
+  .metodo-grid{grid-template-columns:repeat(3,1fr);gap:6px}
+
+  /* ══ DASHBOARD ══ */
+  .dash-cobros-row{display:flex;flex-direction:column;gap:6px}
+  .dash-section-header{font-size:14px;font-weight:700;margin-bottom:10px}
+
+  /* ══ DASHBOARD TABLES ══ */
+  #tbl-cobros-hoy td,#tbl-cobros-hoy th,
+  #tbl-atrasados td,#tbl-atrasados th{padding:10px 8px;font-size:12px}
+  #tbl-cobros-hoy td:nth-child(n+3){display:none}
+  #tbl-cobros-hoy th:nth-child(n+3){display:none}
+
+  /* ══ CLIENTES CARD ══ */
+  .cli-card{padding:12px 14px;border-radius:12px}
+  .cli-card .avatar{width:36px;height:36px;font-size:12px}
+
+  /* ══ CREDITOS LIST ══ */
+  .cr-item{padding:12px 14px;border-radius:12px}
+  .cr-item .chip{font-size:10px;padding:3px 8px}
+
+  /* ══ COBRO RAPIDO ══ */
+  .cr-cuota-item{padding:14px 12px;border-radius:12px;margin-bottom:8px}
+  #btn-cobrar-rapido{
+    position:fixed;bottom:calc(90px + env(safe-area-inset-bottom,0px));
+    left:12px;right:12px;z-index:120;min-height:52px;font-size:15px;
+    border-radius:14px;box-shadow:0 4px 20px rgba(0,229,160,.3)
+  }
+
+  /* ══ WIZARD NUEVO CRÉDITO ══ */
+  .step-bar{padding:0 4px;margin-bottom:14px}
+  .step-item span{font-size:11px}
+  #nc-step-content .card{padding:14px 12px}
+  .plan-card{min-height:50px;padding:12px 6px}
+
+  /* ══ INFORMES ══ */
+  .inf-filtros{flex-direction:column;gap:8px}
+  .inf-filtros select,.inf-filtros input{width:100%;min-height:44px;font-size:14px}
+  .inf-stats-grid{grid-template-columns:1fr 1fr;gap:10px}
+
+  /* ══ DEUDORES ══ */
+  .deudor-item{padding:14px 12px;border-radius:12px;margin-bottom:8px}
+
+  /* ══ ALERTAS ══ */
+  .alerta-item{padding:12px 14px;border-radius:12px;margin-bottom:8px}
+
+  /* ══ HISTORIAL ══ */
+  .audit-item{padding:12px 14px;border-radius:12px;margin-bottom:6px}
+
+  /* ══ SEARCH ══ */
+  .search-wrap input{font-size:15px;min-height:44px;border-radius:10px}
+
+  /* ══ CHIPS ══ */
+  .chip{font-size:11px;padding:3px 8px}
+
+  /* ══ SCROLL ══ */
+  *{-webkit-overflow-scrolling:touch}
 }
+
 @media(max-width:480px){
-  .stats-grid{grid-template-columns:1fr 1fr}
+  /* Extra small phones */
+  .page{padding:62px 10px calc(72px + env(safe-area-inset-bottom,0px)) 10px}
+  .stats-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .stat-val{font-size:22px!important}
+  .stat-card{padding:12px 10px}
+  .card{padding:12px 10px}
+  .btn{font-size:13px;min-height:42px}
+  .page-title{font-size:18px}
   .plan-grid{grid-template-columns:1fr 1fr}
-  .page{padding:152px 10px 20px}
-  .card{padding:12px}
-  .btn{font-size:14px}
-  .page-title{font-size:20px}
+  td,th{font-size:11px;padding:8px 6px}
+  .modal{padding:16px 12px calc(16px + env(safe-area-inset-bottom,0px)) 12px!important}
 }
 </style>
 </head>
@@ -1375,48 +1452,66 @@ select.form-input option{background:var(--s2)}
 
 <!-- MOBILE NAV -->
 <nav class="mobile-nav" id="mobile-nav" style="display:none">
-  <!-- Row 1: Brand + User -->
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px 8px">
-    <!-- Brand -->
+  <!-- Compact top header: Brand + User + Logout -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px">
     <div style="display:flex;align-items:center;gap:8px">
-      <img id="mob-logo-img" src="" style="display:none;height:28px;max-width:72px;object-fit:contain;border-radius:4px">
-      <span id="mob-empresa-name" style="font-family:Syne,sans-serif;font-weight:800;font-size:15px;color:var(--acc);letter-spacing:-.3px">Sistema de Crédito</span>
+      <img id="mob-logo-img" src="" style="display:none;height:24px;max-width:64px;object-fit:contain;border-radius:4px">
+      <span id="mob-empresa-name" style="font-family:Syne,sans-serif;font-weight:800;font-size:14px;color:var(--acc);letter-spacing:-.3px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sistema de Crédito</span>
     </div>
-    <!-- User chip + logout -->
-    <div style="display:flex;align-items:center;gap:8px">
-      <div style="display:flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bord);border-radius:16px;padding:3px 10px 3px 3px">
-        <div id="mob-avatar" style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--acc3),var(--acc));display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#000;flex-shrink:0"></div>
-        <span id="mob-user-name" style="font-size:12px;font-weight:600;color:var(--text);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <div style="display:flex;align-items:center;gap:6px">
+      <div style="display:flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--bord);border-radius:14px;padding:3px 8px 3px 3px">
+        <div id="mob-avatar" style="width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,var(--acc3),var(--acc));display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#000;flex-shrink:0"></div>
+        <span id="mob-user-name" style="font-size:11px;font-weight:600;color:var(--text);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
       </div>
-      <button onclick="doLogout()" style="background:rgba(255,64,96,.08);border:1px solid rgba(255,64,96,.25);color:var(--danger);border-radius:8px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:700;line-height:1.4">⏻</button>
+      <button onclick="doLogout()" style="background:rgba(255,64,96,.1);border:1px solid rgba(255,64,96,.2);color:var(--danger);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:700">⏻</button>
     </div>
-  </div>
-  <!-- Row 2: Nav tabs -->
-  <!-- Fila 1: navegación principal -->
-  <div class="mobile-nav-items" style="padding:0 4px 2px;border-bottom:1px solid rgba(255,255,255,.05)">
-    <button class="m-nav-btn active" data-page="dashboard"><span class="m-nav-icon">🏠</span><span class="m-nav-lbl">Inicio</span></button>
-    <button class="m-nav-btn" data-page="cobros-hoy"><span class="m-nav-icon">📅</span><span class="m-nav-lbl">Hoy</span></button>
-    <button class="m-nav-btn" data-page="clientes"><span class="m-nav-icon">👥</span><span class="m-nav-lbl">Clientes</span></button>
-    <button class="m-nav-btn" data-page="creditos"><span class="m-nav-icon">📋</span><span class="m-nav-lbl">Créditos</span></button>
-  </div>
-  <!-- Fila 2: seguimiento -->
-  <div class="mobile-nav-items" style="padding:2px 4px 6px">
-    <button class="m-nav-btn" data-page="deudores"><span class="m-nav-icon">⚠️</span><span class="m-nav-lbl">Deudores</span></button>
-    <button class="m-nav-btn" data-page="alertas"><span class="m-nav-icon">🔔</span><span class="m-nav-lbl">Alertas</span></button>
-    <button class="m-nav-btn" data-page="informes"><span class="m-nav-icon">📊</span><span class="m-nav-lbl">Informes</span></button>
-    <button class="m-nav-btn" data-page="cobro-rapido" onclick="goTo('cobro-rapido')" style="color:var(--acc)"><span class="m-nav-icon">⚡</span><span class="m-nav-lbl">Cobrar</span></button>
   </div>
 </nav>
 
-<!-- FAB Mobile: botón flotante acceso rápido -->
-<div id="mob-fab-wrap" style="display:none;position:fixed;bottom:24px;right:16px;z-index:150;flex-direction:column;align-items:flex-end;gap:10px">
-  <div id="mob-fab-menu" style="display:none;flex-direction:column;align-items:flex-end;gap:8px;margin-bottom:4px">
-    <button onclick="mobFabClose();goTo('cobros-hoy')" style="background:var(--s1);border:1px solid var(--bord);color:var(--text);border-radius:20px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3);white-space:nowrap;font-family:Syne,sans-serif">📅 Cobros de hoy</button>
-    <button onclick="mobFabClose();openNuevoCliente()" style="background:var(--s1);border:1px solid var(--bord);color:var(--text);border-radius:20px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3);white-space:nowrap;font-family:Syne,sans-serif">👤 Nuevo cliente</button>
-    <button onclick="mobFabClose();goTo('nuevo-credito')" style="background:var(--acc);border:none;color:#000;border-radius:20px;padding:10px 18px;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 4px 16px rgba(0,229,160,.3);white-space:nowrap;font-family:Syne,sans-serif">💳 Nuevo crédito</button>
+<!-- BOTTOM TAB BAR — fixed at bottom of screen -->
+<div id="mob-bottom-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;background:rgba(13,15,22,.97);border-top:1px solid rgba(255,255,255,.07);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding-bottom:env(safe-area-inset-bottom,0px)">
+  <div style="display:flex;justify-content:space-around;padding:4px 0 2px">
+    <button class="mob-tab-btn active" data-page="dashboard" onclick="goTo('dashboard')">
+      <span style="font-size:20px">🏠</span><span class="mob-tab-lbl">Inicio</span>
+    </button>
+    <button class="mob-tab-btn" data-page="cobros-hoy" onclick="goTo('cobros-hoy')">
+      <span style="font-size:20px">📅</span><span class="mob-tab-lbl" id="mob-lbl-hoy">Hoy</span>
+    </button>
+    <button class="mob-tab-btn mob-tab-cobrar" data-page="cobro-rapido" onclick="goTo('cobro-rapido')">
+      <div style="width:50px;height:50px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;margin-top:-20px;box-shadow:0 4px 16px rgba(0,229,160,.4);border:3px solid rgba(13,15,22,.97)">
+        <span style="font-size:22px">⚡</span>
+      </div>
+      <span class="mob-tab-lbl" style="color:var(--acc);font-weight:800;margin-top:2px">Cobrar</span>
+    </button>
+    <button class="mob-tab-btn" data-page="clientes" onclick="goTo('clientes')">
+      <span style="font-size:20px">👥</span><span class="mob-tab-lbl">Clientes</span>
+    </button>
+    <button class="mob-tab-btn" onclick="toggleMobMenu()">
+      <span style="font-size:20px">☰</span><span class="mob-tab-lbl">Más</span>
+    </button>
   </div>
-  <button id="mob-fab-btn" onclick="mobFabToggle()" style="width:52px;height:52px;border-radius:50%;background:var(--acc);border:none;color:#000;font-size:24px;cursor:pointer;box-shadow:0 4px 20px rgba(0,229,160,.4);display:flex;align-items:center;justify-content:center;transition:transform .2s;font-weight:900;line-height:1">+</button>
 </div>
+
+<!-- Mobile "Más" menu overlay -->
+<div id="mob-mas-overlay" onclick="toggleMobMenu()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:199;backdrop-filter:blur(4px)"></div>
+<div id="mob-mas-menu" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;background:var(--s1);border-radius:20px 20px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--bord)">
+  <div style="width:36px;height:4px;background:var(--bord);border-radius:2px;margin:0 auto 18px"></div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
+    <button onclick="toggleMobMenu();goTo('creditos')" class="mob-menu-item"><span style="font-size:24px">📋</span><span>Créditos</span></button>
+    <button onclick="toggleMobMenu();initNuevoCredito()" class="mob-menu-item" style="border-color:var(--acc);background:rgba(0,229,160,.06)"><span style="font-size:24px">➕</span><span style="color:var(--acc)">Nuevo</span></button>
+    <button onclick="toggleMobMenu();goTo('deudores')" class="mob-menu-item"><span style="font-size:24px">⚠️</span><span>Deudores</span></button>
+    <button onclick="toggleMobMenu();goTo('informes')" class="mob-menu-item"><span style="font-size:24px">📊</span><span>Informes</span></button>
+    <button onclick="toggleMobMenu();goTo('alertas')" class="mob-menu-item"><span style="font-size:24px">🔔</span><span>Alertas</span></button>
+    <button onclick="toggleMobMenu();goTo('refinanciacion')" class="mob-menu-item"><span style="font-size:24px">🔄</span><span>Refinanc.</span></button>
+  </div>
+  <div id="mob-admin-items" style="display:none;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px;padding-top:10px;border-top:1px solid var(--bord)">
+    <button onclick="toggleMobMenu();goTo('aprobacion')" class="mob-menu-item"><span style="font-size:24px">✅</span><span>Aprobar</span></button>
+    <button onclick="toggleMobMenu();goTo('historial')" class="mob-menu-item"><span style="font-size:24px">📜</span><span>Historial</span></button>
+    <button onclick="toggleMobMenu();goTo('configuracion')" class="mob-menu-item"><span style="font-size:24px">⚙️</span><span>Config</span></button>
+  </div>
+</div>
+
+
 
 <!-- MODAL COBRO -->
 <div class="modal-overlay" id="modal-cobro">
@@ -2273,6 +2368,7 @@ const PAGE_TITLES = {
 function goTo(page) {
   $$('.page').forEach(p => p.classList.remove('active'))
   $$('.nav-btn,.m-nav-btn').forEach(b => b.classList.remove('active'))
+  $$('.mob-tab-btn[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page===page))
   $('page-' + page)?.classList.add('active')
   $$(`[data-page="${page}"]`).forEach(b => b.classList.add('active'))
   const hTitle = $('header-page-title')
@@ -2290,6 +2386,7 @@ function ajustarLayout() {
   const header = $('app-header')
   const fab    = $('mob-fab-wrap')
   const isMobile = window.innerWidth <= 860
+  const bottomBar = $('mob-bottom-bar')
   if (mob && sesion)    mob.style.display    = isMobile ? 'block' : 'none'
   if (header)           header.style.display  = isMobile ? 'none'  : 'flex'
   if (fab && sesion)    fab.style.display     = isMobile ? 'flex'  : 'none'
@@ -2516,6 +2613,9 @@ function updateBadges() {
   $('badge-hoy').textContent = cobHoy
   $('badge-deudores').textContent = deudores
   $('badge-alertas').textContent = alertas
+  // Update mobile nav label badges
+  const mobHoyLbl = $('mob-lbl-hoy')
+  if (mobHoyLbl) mobHoyLbl.textContent = cobHoy > 0 ? `Hoy (${cobHoy})` : 'Hoy'
   $('badge-aprobacion').textContent = pendAprobacion
   $('badge-proximas').textContent = proximas7
 }
@@ -6145,50 +6245,41 @@ function enviarFirmaWhatsApp() {
   const fmtM = (n) => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(n||0)
   const tasa = DB.config['tasa_'+cr.cantidadCuotas+'_cuotas'] || DB.config['tasa_diario'] || 0
 
-  // Build self-contained payload encoded as base64 (no Supabase read needed)
+  // Build compact payload (NO logo/plantilla to keep URL short)
   const payload = {
     crId:        cr.id,
-    empresa:     DB.empresa.nombre        || 'CréditoFácil',
-    logo:        DB.empresa.logo          || '',
+    empresa:     (DB.empresa.nombre || 'CréditoFácil').slice(0,40),
     cuit:        DB.empresa.cuit          || '',
     titular:     cli.nombreApellido,
     dni:         cli.dni                  || '',
-    descripcion: cr.descripcion           || 'Crédito personal',
+    descripcion: (cr.descripcion || 'Crédito personal').slice(0,50),
     monto:       fmtM(cr.monto            || cr.precioOriginal),
     total:       fmtM(cr.totalFinanciado  || cr.monto),
-    cuotas:      cr.cantidadCuotas        || cr.cuotasFinales || '',
+    cuotas:      String(cr.cantidadCuotas || cr.cuotasFinales || ''),
     frecuencia:  cr.frecuenciaPago        || 'mensual',
     primeraCuota:cr.fechaPrimeraCuota     || '',
     tipoCuota:   cr.tipoCuota             || 'vencida',
-    tna:         tasa + '%',
-    plantilla:   DB.empresa.plantillaContrato || ''
+    tna:         tasa + '%'
+    // logo y plantilla excluidos para mantener el link corto
   }
 
-  // Encode as base64 - no Supabase call needed!
+  // Encode as base64 - compact, should be ~300-400 chars
   const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+  console.log('Link length:', encoded.length, 'chars')
   const baseUrl = window.location.href.split('?')[0].split('#')[0]
   const link    = `${baseUrl}?firma=${encoded}`
 
   const empresa = DB.empresa.nombre || 'CréditoFácil'
   const monto   = fmtM(cr.monto||0)
-  const msg = [
-    `✍️ *Firma digital de contrato — ${empresa}*`,
-    '',
-    `Hola ${cli.nombreApellido.split(' ')[0]} 👋`,
-    '',
-    `Te enviamos el link para firmar digitalmente tu contrato de crédito:`,
-    `📋 *${cr.descripcion || 'Crédito personal'}* — ${monto}`,
-    '',
-    `👇 *Firmá desde tu celular:*`,
-    link,
-    '',
-    `_Al firmar, aceptás los términos del contrato._`,
-    `_${empresa}_`,
-  ].join('\n')
+  // Keep message SHORT - the link is already long
+  const nombre = cli.nombreApellido.split(' ')[0]
+  const msg = `✍️ *Firma de contrato — ${empresa}*\n\nHola ${nombre}! Firmá tu crédito desde acá:\n${link}\n\n_${cr.descripcion||'Crédito'} — ${monto}_`
 
   const tel = cli.celular.replace(/[^0-9]/g,'')
   const telFmt = tel.startsWith('0') ? '54'+tel.slice(1) : tel.startsWith('54') ? tel : '54'+tel
-  window.open(`https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`, '_blank')
+  const waUrl = `https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`
+  console.log('WA URL length:', waUrl.length)
+  window.open(waUrl, '_blank')
   showToast('📲 WhatsApp abierto con el link de firma')
   registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido})
 }
@@ -7679,6 +7770,17 @@ function actualizarSidebarPermisos() {
   })
 }
 
+
+function toggleMobMenu() {
+  const overlay = $('mob-mas-overlay')
+  const menu    = $('mob-mas-menu')
+  const showing = menu.style.display !== 'none'
+  overlay.style.display = showing ? 'none' : 'block'
+  menu.style.display    = showing ? 'none' : 'block'
+  // Show admin items if admin
+  const adminRow = $('mob-admin-items')
+  if (adminRow) adminRow.style.display = sesion?.esAdmin ? 'grid' : 'none'
+}
 
 function ncPaso2Siguiente() {
   if (!ncClienteId) { showToast('Seleccioná un cliente primero','⚠️'); return }
