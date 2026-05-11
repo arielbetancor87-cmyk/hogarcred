@@ -5972,6 +5972,10 @@ async function cargarContratoRemoto(token) {
       payload = JSON.parse(decodeURIComponent(escape(atob(token))))
     } catch(e) {
       console.error('Failed to decode firma token:', e)
+      // Old format token (short string) - not base64, can't decode
+      // Show error with message to request new link
+      $('fr-error').querySelector('h3').textContent = 'Link desactualizado'
+      $('fr-error').querySelector('p').textContent = 'Este link fue generado con una versión anterior. Por favor pedile a tu asesor que te envíe un link nuevo.'
       fr_show('fr-error')
       return
     }
@@ -6138,33 +6142,35 @@ function enviarFirmaWhatsApp() {
   const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
   if (!cli?.celular) { showToast('El cliente no tiene celular registrado','⚠️'); return }
 
-  // Generate or reuse token
-  let token = cr.firmaToken
-  if (!token) {
-    token = generarTokenFirma(contratoActualCrId)
-    cr.firmaToken = token
-    // Save token to Supabase in datos
-    // Build datos object from all available credito fields + token
-    const datosActual = {}
-    if (cr.datos && typeof cr.datos === 'object') Object.assign(datosActual, cr.datos)
-    else try { Object.assign(datosActual, JSON.parse(cr.datos||'{}')) } catch {}
-    // Include existing metadata
-    if (cr.tipoCuota) datosActual.tipoCuota = cr.tipoCuota
-    if (cr.metodoPagoAdelantada) datosActual.metodoPagoAdelantada = cr.metodoPagoAdelantada
-    datosActual.firmaToken = token
-    const datosStr = JSON.stringify(datosActual)
-    // PATCH to Supabase - wait for it to confirm before showing link
-    supa('creditos','PATCH', { datos: datosStr }, `?id=eq.${cr.id}`)
-      .then(() => console.log('✓ firmaToken saved to Supabase'))
-      .catch(e => console.error('Error saving firmaToken:', e))
-    guardarDB()
+  const fmtM = (n) => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(n||0)
+  const tasa = DB.config['tasa_'+cr.cantidadCuotas+'_cuotas'] || DB.config['tasa_diario'] || 0
+
+  // Build self-contained payload encoded as base64 (no Supabase read needed)
+  const payload = {
+    crId:        cr.id,
+    empresa:     DB.empresa.nombre        || 'CréditoFácil',
+    logo:        DB.empresa.logo          || '',
+    cuit:        DB.empresa.cuit          || '',
+    titular:     cli.nombreApellido,
+    dni:         cli.dni                  || '',
+    descripcion: cr.descripcion           || 'Crédito personal',
+    monto:       fmtM(cr.monto            || cr.precioOriginal),
+    total:       fmtM(cr.totalFinanciado  || cr.monto),
+    cuotas:      cr.cantidadCuotas        || cr.cuotasFinales || '',
+    frecuencia:  cr.frecuenciaPago        || 'mensual',
+    primeraCuota:cr.fechaPrimeraCuota     || '',
+    tipoCuota:   cr.tipoCuota             || 'vencida',
+    tna:         tasa + '%',
+    plantilla:   DB.empresa.plantillaContrato || ''
   }
 
+  // Encode as base64 - no Supabase call needed!
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
   const baseUrl = window.location.href.split('?')[0].split('#')[0]
-  const link    = `${baseUrl}?firma=${token}`
-  const empresa = DB.empresa.nombre || 'CréditoFácil'
-  const monto   = new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(cr.monto||0)
+  const link    = `${baseUrl}?firma=${encoded}`
 
+  const empresa = DB.empresa.nombre || 'CréditoFácil'
+  const monto   = fmtM(cr.monto||0)
   const msg = [
     `✍️ *Firma digital de contrato — ${empresa}*`,
     '',
@@ -6184,7 +6190,7 @@ function enviarFirmaWhatsApp() {
   const telFmt = tel.startsWith('0') ? '54'+tel.slice(1) : tel.startsWith('54') ? tel : '54'+tel
   window.open(`https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`, '_blank')
   showToast('📲 WhatsApp abierto con el link de firma')
-  registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido, token})
+  registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido})
 }
 
 // ════════════════════════════════════════════════════
