@@ -6066,18 +6066,29 @@ async function cargarContratoRemoto(token) {
   fr_show('fr-loading')
 
   try {
-    // Decode the self-contained payload from base64 URL param
+    // Decode URL-safe base64 payload
     let payload = null
     try {
-      payload = JSON.parse(decodeURIComponent(escape(atob(token))))
-    } catch(e) {
-      console.error('Failed to decode firma token:', e)
-      // Old format token (short string) - not base64, can't decode
-      // Show error with message to request new link
-      $('fr-error').querySelector('h3').textContent = 'Link desactualizado'
-      $('fr-error').querySelector('p').textContent = 'Este link fue generado con una versión anterior. Por favor pedile a tu asesor que te envíe un link nuevo.'
-      fr_show('fr-error')
-      return
+      // Restore standard base64 from URL-safe version
+      const b64 = token.replace(/-/g, '+').replace(/_/g, '/')
+      const padded = b64 + '=='.slice(0, (4 - b64.length % 4) % 4)
+      // Decode: atob → URI-encoded JSON → JSON.parse
+      const _raw = atob(padded)
+      payload = JSON.parse(decodeURIComponent(_raw))
+    } catch(e1) {
+      // Fallback: try without URI decode (older tokens)
+      try {
+        const _raw2 = atob(token.replace(/-/g,'+').replace(/_/g,'/') + '=='.slice(0,(4-token.replace(/-/g,'+').replace(/_/g,'/').length%4)%4))
+        payload = JSON.parse(_raw2)
+      } catch(e2) {
+        console.error('Failed to decode firma token:', e1, e2)
+        const h3 = $('fr-error').querySelector('h3')
+        const p  = $('fr-error').querySelector('p')
+        if (h3) h3.textContent = 'Link desactualizado'
+        if (p)  p.textContent  = 'Pedile a tu asesor que te envíe un link nuevo.'
+        fr_show('fr-error')
+        return
+      }
     }
     frCreditoId = payload.crId
     console.log('✓ Payload decoded for:', payload.titular, '|', payload.descripcion)
@@ -6263,9 +6274,10 @@ function enviarFirmaWhatsApp() {
     // logo y plantilla excluidos para mantener el link corto
   }
 
-  // Encode as base64 - compact, should be ~300-400 chars
-  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
-  console.log('Link length:', encoded.length, 'chars')
+  // Encode as URL-safe base64 (+ → - / → _ = stripped) to avoid URL corruption
+  const _b64    = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+  const encoded = _b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')
+  console.log('Encoded length:', encoded.length, 'chars')
   const baseUrl = window.location.href.split('?')[0].split('#')[0]
   const link    = `${baseUrl}?firma=${encoded}`
 
