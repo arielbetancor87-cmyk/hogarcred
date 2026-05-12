@@ -2861,7 +2861,11 @@ function confirmarCobro() {
     id: cobranza.id, cuota_id: cobranza.cuotaId, usuario_id: cobranza.usuarioId,
     monto_cobrado: cobranza.montoCobrado, metodo_pago: cobranza.metodoPago,
     referencia_pago: cobranza.referenciaPago||null, anulada: false,
-    datos: JSON.stringify({})
+    datos: JSON.stringify({
+      esParcial:         cobranza.esParcial||false,
+      sinRecargo:        cobranza.sinRecargo||false,
+      montoOriginalCuota:cobranza.montoOriginalCuota||null
+    })
   }).catch(()=>{})
   // Update cuota state
   supa('cuotas','PATCH',{estado:cuota.estado,fecha_pago:cuota.fechaPago},`?id=eq.${cuota.id}`).catch(()=>{})
@@ -3940,7 +3944,7 @@ function renderNuevoCredito() {
   else if (ncStep===3) {
     renderPaso3()
   }
-}
+} // end renderNuevoCredito
 
 function ncSelCli(id) {
   ncClienteId=id; renderNuevoCredito()
@@ -4075,10 +4079,16 @@ function confirmarAnulacion() {
     if (cr?.estado==='CANCELADO') cr.estado='ACTIVO'
   }
   registrarAuditoria('ANULACION_COBRO','cobranza',cb.id,{ motivo, montoCobrado:cb.montoCobrado })
+  // Sync to Supabase
+  supa('cobranzas','PATCH',{anulada:true,anulada_por:cb.anuladaPor,anulada_at:cb.anuladaAt,motivo_anulacion:motivo},`?id=eq.${cb.id}`).catch(()=>{})
+  if (cuota) supa('cuotas','PATCH',{estado:cuota.estado,fecha_pago:null},`?id=eq.${cuota.id}`).catch(()=>{})
   closeModal('modal-anular')
   closeModal('modal-ver-cliente')
   showToast('Cobranza anulada','❌')
   updateBadges()
+    // Sync to Supabase
+  supa('cobranzas','PATCH',{anulada:true,anulada_por:cb.anuladaPor,anulada_at:cb.anuladaAt,motivo_anulacion:motivo},`?id=eq.${cb.id}`).catch(()=>{})
+  if (cuota) supa('cuotas','PATCH',{estado:cuota.estado,fecha_pago:null},`?id=eq.${cuota.id}`).catch(()=>{})
   guardarDB()
 }
 
@@ -4231,6 +4241,24 @@ function confirmarRefinanciacion() {
     DB.cuotas.push({ id:uid(), creditoId:ncrId, numeroCuota:i+1, montoOriginal:Math.round(mc*100)/100, montoRecargo:0, fechaVencimiento:f.toISOString().split('T')[0], estado:'PENDIENTE', fechaPago:null })
   }
   registrarAuditoria('REFINANCIACION','refinanciacion',refId,{ cliente:DB.clientes.find(c=>c.id===refClienteId)?.nombreApellido, total:tot, cuotas:refCuotas })
+  // Sync to Supabase
+  const newCrRef = DB.creditos.find(x=>x.id===ncrId)
+  if (newCrRef) supaGuardar('creditos',{
+    id:ncrId, cliente_id:refClienteId, usuario_id:sesion.id,
+    descripcion:'Refinanciación', precio_original:deudaTotal,
+    total_financiado:Math.round(tot*100)/100, cantidad_cuotas:refCuotas,
+    frecuencia_pago:'mensual', tasa_interes:tasa, estado:'ACTIVO',
+    datos:JSON.stringify({refinanciacionId:refId})
+  }).catch(()=>{})
+  // PATCH old creditos to REFINANCIADO
+  refCreditosIds.forEach(crId2 => supa('creditos','PATCH',{estado:'REFINANCIADO'},`?id=eq.${crId2}`).catch(()=>{}))
+  // Save new cuotas
+  DB.cuotas.filter(q=>q.creditoId===ncrId).forEach(q =>
+    supaGuardar('cuotas',{id:q.id,credito_id:ncrId,numero_cuota:q.numeroCuota,
+      monto_original:q.montoOriginal,monto_recargo:0,
+      fecha_vencimiento:q.fechaVencimiento,estado:'PENDIENTE',fecha_pago:null
+    }).catch(()=>{})
+  )
   guardarDB()
   showToast('✅ Refinanciación creada')
   updateBadges()
@@ -4596,6 +4624,7 @@ function guardarUsuario() {
   if (DB.usuarios.find(u=>u.username===usr)){showToast('El usuario ya existe','⚠️');return}
   const nuevo={id:uid(),username:usr,password:pwd,nombreCompleto:nom,esAdmin:false,activo:true,permisos:newUserPerms}
   DB.usuarios.push(nuevo)
+  supaGuardar('usuarios',{id:nuevo.id,username:nuevo.username,password:nuevo.password,nombre_completo:nuevo.nombreCompleto,es_admin:false,activo:true,permisos:JSON.stringify(nuevo.permisos||[])}).catch(()=>{})
   registrarAuditoria('CREACION_USUARIO','usuario',nuevo.id,{username:usr,nombre:nom})
   showToast('✅ Usuario creado')
   closeModal('modal-usuario')
@@ -4774,6 +4803,11 @@ function confirmarEliminarCredito() {
   // Eliminar crédito
   DB.creditos = DB.creditos.filter(c=>c.id!==creditoAEliminarId)
   registrarAuditoria('ELIMINACION_CREDITO','credito',creditoAEliminarId,{ cliente:cli?.nombreApellido, producto:prodDesc })
+  // Sync to Supabase
+  const _crId = creditoAEliminarId
+  supa('cuotas','DELETE',null,`?credito_id=eq.${_crId}`).catch(()=>{})
+  supa('cobranzas','DELETE',null,`?credito_id=eq.${_crId}`).catch(()=>{})
+  supaEliminar('creditos', _crId).catch(()=>{})
   closeModal('modal-eliminar-credito')
   guardarDB()
   showToast('🗑️ Crédito eliminado correctamente','🗑️')
@@ -5095,6 +5129,7 @@ function eliminarUsuarioAdmin(id) {
   if (!u||u.esAdmin) return
   if (!confirm(`¿Eliminar el usuario @${u.username}? Esta acción no se puede deshacer.`)) return
   DB.usuarios = DB.usuarios.filter(x=>x.id!==id)
+  supaEliminar('usuarios', id).catch(()=>{})
   registrarAuditoria('ELIMINACION_USUARIO','usuario',id,{ username:u.username, nombre:u.nombreCompleto })
   logActividad('ELIMINACION_USUARIO','Panel Admin','EXITOSA',{ username:u.username })
   guardarDB()
@@ -6006,7 +6041,7 @@ function guardarFirmaContrato() {
   datosActual.firmaData  = dataUrl
   datosActual.firmaFecha = cr.firmaFecha
   supa('creditos','PATCH',
-    { datos: JSON.stringify({ ...datosActual, tipoCuota: cr.tipoCuota, metodoPagoAdelantada: cr.metodoPagoAdelantada, firmaData: dataUrl, firmaFecha: cr.firmaFecha }) },
+    { datos: JSON.stringify({ ...datosActual, firmaData: dataUrl, firmaFecha: cr.firmaFecha }) },
     `?id=eq.${cr.id}`
   ).catch(()=>{})
 
@@ -6070,7 +6105,7 @@ async function cargarContratoRemoto(token) {
     let payload = null
     try {
       // Restore standard base64 from URL-safe version
-      const b64 = token.replace(/-/g, '+').replace(/_/g, '/')
+      const b64 = token.split('-').join('+').split('_').join('/')
       const padded = b64 + '=='.slice(0, (4 - b64.length % 4) % 4)
       // Decode: atob → URI-encoded JSON → JSON.parse
       const _raw = atob(padded)
@@ -6330,6 +6365,7 @@ function confirmarEliminarCliente() {
   logActividad('ELIMINACION_CLIENTE','Clientes','EXITOSA',{nombre:cli?.nombreApellido})
   closeModal('modal-eliminar-cliente')
   closeModal('modal-ver-cliente')
+  supaEliminar('clientes', clienteAEliminarId).catch(()=>{})
   guardarDB()
   showToast('🗑️ Cliente eliminado','🗑️')
   updateBadges()
@@ -7046,7 +7082,9 @@ function confirmarEliminarCobro() {
     monto: cb.montoCobrado
   })
   logActividad('ELIMINACION_COBRO','Panel Admin','EXITOSA',{ cobranzaId:cobroAEliminarId })
-
+  // Sync to Supabase
+  supaEliminar('cobranzas', cobroAEliminarId).catch(()=>{})
+  if (cuota) supa('cuotas','PATCH',{estado:cuota.estado,fecha_pago:null,monto_recargo:0},`?id=eq.${cuota.id}`).catch(()=>{})
   guardarDB()
   closeModal('modal-eliminar-cobro')
   showToast('🗑️ Cobro eliminado y cuota revertida a Pendiente')
@@ -7168,10 +7206,10 @@ async function cargarDesdeSupa() {
         refinanciacionId:d.refinanciacionId|| null,
         tipoCuota:          d.tipoCuota           || null,
         metodoPagoAdelantada: d.metodoPagoAdelantada || null,
-        // firmaToken, firmaData, firmaFecha are inside the datos JSON column
-        firmaToken:  (()=>{ try { return JSON.parse(d.datos||'{}').firmaToken||null } catch{return null} })(),
-        firmaData:   (()=>{ try { return JSON.parse(d.datos||'{}').firmaData||null  } catch{return null} })(),
-        firmaFecha:  (()=>{ try { return JSON.parse(d.datos||'{}').firmaFecha||null } catch{return null} })()
+        // firmaToken, firmaData, firmaFecha stored in datos JSON (d is already parsed)
+        firmaToken:  d.firmaToken  || null,
+        firmaData:   d.firmaData   || null,
+        firmaFecha:  d.firmaFecha  || null
       }
     })
 
