@@ -86,6 +86,7 @@ h1,h2,h3,h4,b,.font-d{font-family:'Syne',sans-serif}
 .page.active{display:block}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
 
 /* ── TOPBAR ── */
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;gap:12px;flex-wrap:wrap}
@@ -1954,7 +1955,22 @@ select.form-input option{background:var(--s2)}
 <div class="toast" id="toast"><span id="toast-icon">✅</span><span id="toast-msg">Listo</span></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script>
+<script>function frActualizarEstadoFirma() {
+  const btn      = $('fr-btn-firmar')
+  const indicator= $('fr-firma-indicator')
+  const status   = $('fr-firma-status')
+  if (!btn) return
+  if (!frEmpty) {
+    btn.disabled=false; btn.style.opacity='1'; btn.style.cursor='pointer'
+    if (indicator) indicator.style.background='#00e5a0'
+    if (status)    { status.textContent='✓ Firma lista'; status.style.color='#00e5a0' }
+  } else {
+    btn.disabled=true; btn.style.opacity='.4'; btn.style.cursor='not-allowed'
+    if (indicator) indicator.style.background='#333'
+    if (status)    { status.textContent='Sin firma todavía'; status.style.color='#666' }
+  }
+}
+
 // ════════════════════════════════════════════════════
 // ESTADO GLOBAL
 // ════════════════════════════════════════════════════
@@ -6097,96 +6113,167 @@ function checkFirmaRemota() {
 }
 
 async function cargarContratoRemoto(token) {
-  const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado'].forEach(x => $(x).style.display = x===id?'block':'none')
+  const fr_show = (id) => {
+    ['fr-loading','fr-error','fr-content','fr-ya-firmado','fr-step-dni']
+      .forEach(x => { const el=$(x); if(el) el.style.display = x===id?'block':'none' })
+  }
   fr_show('fr-loading')
 
   try {
-    // Decode URL-safe base64 payload
+    // ── Decode self-contained base64 payload ──────────────────────────────
     let payload = null
     try {
-      // Restore standard base64 from URL-safe version
-      const b64 = token.split('-').join('+').split('_').join('/')
+      const b64    = token.split('-').join('+').split('_').join('/')
       const padded = b64 + '=='.slice(0, (4 - b64.length % 4) % 4)
-      // Decode: atob → URI-encoded JSON → JSON.parse
-      const _raw = atob(padded)
-      payload = JSON.parse(decodeURIComponent(_raw))
+      const raw    = atob(padded)
+      payload      = JSON.parse(decodeURIComponent(raw))
     } catch(e1) {
-      // Fallback: try without URI decode (older tokens)
       try {
-        const _raw2 = atob(token.replace(/-/g,'+').replace(/_/g,'/') + '=='.slice(0,(4-token.replace(/-/g,'+').replace(/_/g,'/').length%4)%4))
-        payload = JSON.parse(_raw2)
+        const raw = atob(token.split('-').join('+').split('_').join('/') + '=='.slice(0,(4-token.length%4)%4))
+        payload   = JSON.parse(raw)
       } catch(e2) {
-        console.error('Failed to decode firma token:', e1, e2)
-        const h3 = $('fr-error').querySelector('h3')
-        const p  = $('fr-error').querySelector('p')
+        console.error('Decode failed:', e1, e2)
+        const h3 = $('fr-error')?.querySelector('h3')
+        const p  = $('fr-error')?.querySelector('p')
         if (h3) h3.textContent = 'Link desactualizado'
         if (p)  p.textContent  = 'Pedile a tu asesor que te envíe un link nuevo.'
         fr_show('fr-error')
         return
       }
     }
-    frCreditoId = payload.crId
-    console.log('✓ Payload decoded for:', payload.titular, '|', payload.descripcion)
 
-    // Check if already signed (read from Supabase - may fail due to RLS, that's OK)
+    frCreditoId = payload.crId
+    window._frPayload = payload  // store for later use
+    console.log('✓ Payload decoded:', payload.descripcion, 'para', payload.titular)
+
+    // ── Populate header ────────────────────────────────────────────────────
+    if (payload.empresa) $('fr-empresa').textContent = payload.empresa
+    if (payload.logo)    { const img=$('fr-logo'); img.src=payload.logo; img.style.display='block' }
+
+    // ── Check if already signed ────────────────────────────────────────────
     try {
-      const checkResp = await fetch(
+      const resp = await fetch(
         SUPA_URL + '/rest/v1/creditos?id=eq.' + frCreditoId + '&select=datos',
         { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
       )
-      if (checkResp.ok) {
-        const rows = await checkResp.json()
-        const raw = rows[0]?.datos
+      if (resp.ok) {
+        const rows = await resp.json()
+        const raw  = rows[0]?.datos
         if (raw) {
           const d = typeof raw==='string' ? JSON.parse(raw) : raw
           if (d.firmaData) {
             fr_show('fr-ya-firmado')
-            $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + (d.firmaFecha ? new Date(d.firmaFecha).toLocaleString('es-AR') : '—')
+            $('fr-ya-firmado-fecha').textContent = 'Firmado el ' +
+              (d.firmaFecha ? new Date(d.firmaFecha).toLocaleString('es-AR') : '—')
             return
           }
         }
       }
-    } catch(e) { console.warn('RLS check failed (OK):', e.message) }
+    } catch(e) { console.warn('Could not check firma status (RLS):', e.message) }
 
-    // Populate UI from payload (no Supabase read needed)
-    if (payload.empresa) $('fr-empresa').textContent = payload.empresa
-    if (payload.logo) { const img=$('fr-logo'); img.src=payload.logo; img.style.display='block' }
-
-    $('fr-titulo').textContent = payload.descripcion || 'Contrato de Crédito Personal'
-
-    const fmtDate2 = (s) => s ? new Date(s+'T12:00:00').toLocaleDateString('es-AR') : '—'
-    const filas = [
-      ['👤 Titular',   payload.titular  || '—'],
-      ['🪪 DNI',       payload.dni       || '—'],
-      ['💰 Monto',     payload.monto     || '—'],
-      ['💰 Total',     payload.total     || '—'],
-      ['📊 TNA',       payload.tna       || '—'],
-      ['📅 Cuotas',    (payload.cuotas||'—') + ' cuotas ' + (payload.frecuencia||'')],
-      ['📆 1ra cuota', fmtDate2(payload.primeraCuota)],
-      ['📌 Tipo',      payload.tipoCuota==='adelantada'?'⚡ Adelantada':'📅 Vencida'],
-    ]
-    $('fr-datos').innerHTML = filas.map(([k,v]) =>
-      `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2a2d3e;padding:7px 0;font-size:13px">
-        <span style="color:#888">${k}</span><b style="text-align:right;max-width:60%">${v}</b></div>`
-    ).join('')
-
-    if (payload.plantilla) {
-      let txt = payload.plantilla
-        .replace(/{{empresa}}/gi, payload.empresa||'—').replace(/{{cuit}}/gi, payload.cuit||'—')
-        .replace(/{{titular}}/gi, payload.titular||'—').replace(/{{dni}}/gi, payload.dni||'—')
-        .replace(/{{monto}}/gi, payload.monto||'—').replace(/{{total}}/gi, payload.total||'—')
-        .replace(/{{cuotas}}/gi, String(payload.cuotas||'—'))
-        .replace(/{{fecha}}/gi, new Date().toLocaleDateString('es-AR')).replace(/\n/g, '<br>')
-      $('fr-contrato-text').innerHTML = txt
-    }
-
-    fr_show('fr-content')
-    setTimeout(initFirmaRemotaCanvas, 100)
+    // ── PASO 1: Show DNI validation screen ─────────────────────────────────
+    fr_show('fr-step-dni')
 
   } catch(err) {
-    console.error('Error cargando contrato remoto:', err)
+    console.error('Error cargando contrato:', err)
     fr_show('fr-error')
   }
+}
+
+// ── DNI input changed ──────────────────────────────────────────────────────
+function frDniChanged(val) {
+  const btn = $('fr-btn-dni')
+  if (!btn) return
+  const clean = val.replace(/\D/g, '')
+  btn.disabled    = clean.length < 7
+  btn.style.opacity = clean.length < 7 ? '.4' : '1'
+  btn.style.cursor  = clean.length < 7 ? 'not-allowed' : 'pointer'
+  // Hide error on change
+  const err = $('fr-dni-error')
+  if (err) err.style.display = 'none'
+}
+
+// ── Validate DNI → show contract ─────────────────────────────────────────
+function frValidarDni() {
+  const payload = window._frPayload
+  if (!payload) return
+  const input   = $('fr-dni-input')
+  if (!input) return
+  const dniIngresado = input.value.toString().replace(/\D/g,'').trim()
+  const dniEsperado  = (payload.dni || '').toString().replace(/\D/g,'').trim()
+
+  if (!dniIngresado || dniIngresado !== dniEsperado) {
+    const err = $('fr-dni-error')
+    if (err) { err.style.display='block' }
+    // Shake animation
+    input.style.borderColor = '#ff4060'
+    input.style.animation   = 'shake .4s ease'
+    setTimeout(()=>{ input.style.animation=''; input.style.borderColor='#2a2d3e' }, 500)
+    return
+  }
+
+  // ── DNI OK → save to localStorage and show contract ───────────────────
+  try { localStorage.setItem('hogarcred_firma_dni', dniIngresado) } catch(e) {}
+
+  ['fr-step-dni','fr-loading','fr-error','fr-ya-firmado']
+    .forEach(id => { const el=$(id); if(el) el.style.display='none' })
+
+  frMostrarContrato(payload)
+}
+
+// ── Render contract content ────────────────────────────────────────────────
+function frMostrarContrato(payload) {
+  const fmtDate = (s) => s ? new Date(s+'T12:00:00').toLocaleDateString('es-AR') : '—'
+
+  $('fr-titulo').textContent = payload.descripcion || 'Contrato de Crédito Personal'
+
+  const filas = [
+    ['👤 Titular',   payload.titular    || '—'],
+    ['🪪 DNI',       payload.dni         || '—'],
+    ['💰 Monto',     payload.monto       || '—'],
+    ['💰 Total',     payload.total       || '—'],
+    ['📊 TNA',       payload.tna         || '—'],
+    ['📅 Cuotas',    (payload.cuotas||'—') + ' cuotas ' + (payload.frecuencia||'')],
+    ['📆 1ra cuota', fmtDate(payload.primeraCuota)],
+    ['📌 Tipo',      payload.tipoCuota==='adelantada' ? '⚡ Adelantada' : '📅 Vencida'],
+  ]
+  $('fr-datos').innerHTML = filas.map(([k,v]) =>
+    `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2a2d3e;padding:7px 0;font-size:13px">
+      <span style="color:#888">${k}</span>
+      <b style="text-align:right;max-width:60%;word-break:break-word">${v}</b>
+    </div>`
+  ).join('')
+
+  // Contract text from plantilla (if present)
+  if (payload.plantilla) {
+    let txt = payload.plantilla
+      .replace(/{{empresa}}/gi,  payload.empresa  ||'—')
+      .replace(/{{cuit}}/gi,     payload.cuit      ||'—')
+      .replace(/{{titular}}/gi,  payload.titular   ||'—')
+      .replace(/{{dni}}/gi,      payload.dni        ||'—')
+      .replace(/{{monto}}/gi,    payload.monto      ||'—')
+      .replace(/{{total}}/gi,    payload.total      ||'—')
+      .replace(/{{cuotas}}/gi,   String(payload.cuotas||'—'))
+      .replace(/{{fecha}}/gi,    new Date().toLocaleDateString('es-AR'))
+      .replace(/\n/g, '<br>')
+    $('fr-contrato-text').innerHTML = txt
+  } else {
+    // Default contract text
+    $('fr-contrato-text').innerHTML = `
+      <p><b>CONTRATO DE CRÉDITO</b></p>
+      <p>Por medio del presente instrumento, <b>${payload.empresa||'la empresa'}</b>
+      (CUIT: ${payload.cuit||'—'}) otorga un crédito a <b>${payload.titular||'—'}</b>
+      (DNI: ${payload.dni||'—'}) por un monto total de <b>${payload.total||'—'}</b>,
+      pagadero en <b>${payload.cuotas||'—'} cuotas ${payload.frecuencia||''}</b>,
+      con primera cuota el <b>${fmtDate(payload.primeraCuota)}</b>.</p>
+      <p>El cliente declara haber recibido la información completa sobre las condiciones
+      del crédito y acepta las presentes condiciones.</p>
+      <p>Al firmar este documento, el cliente acepta todos los términos y condiciones
+      del crédito otorgado.</p>`
+  }
+
+  $('fr-content').style.display = 'block'
+  setTimeout(initFirmaRemotaCanvas, 100)
 }
 
 
@@ -8024,71 +8111,114 @@ async function instalarApp() {
      FIRMA REMOTA (accessible without login)
      ════════════════════════════════════════════ -->
 <div id="firma-remota-page" style="display:none;min-height:100vh;background:#0d0f16;font-family:'DM Sans',sans-serif;color:#fff">
-  <div style="max-width:480px;margin:0 auto;padding:24px 16px">
+  <div style="max-width:480px;margin:0 auto;padding:24px 16px 40px">
+
     <!-- Header -->
-    <div style="text-align:center;padding:24px 0 16px">
-      <img id="fr-logo" src="" style="max-height:60px;max-width:200px;object-fit:contain;display:none;margin:0 auto 12px">
-      <h2 id="fr-empresa" style="font-size:18px;font-weight:800;color:#00e5a0;margin-bottom:4px"></h2>
+    <div style="text-align:center;padding:20px 0 14px">
+      <img id="fr-logo" src="" style="max-height:56px;max-width:180px;object-fit:contain;display:none;margin:0 auto 10px">
+      <h2 id="fr-empresa" style="font-size:20px;font-weight:800;color:#00e5a0;margin-bottom:4px;letter-spacing:-.3px"></h2>
       <p style="font-size:12px;color:#888">Firma digital de contrato de crédito</p>
     </div>
 
-    <!-- Loading state -->
-    <div id="fr-loading" style="text-align:center;padding:40px 0">
-      <div style="width:40px;height:40px;border:3px solid #333;border-top-color:#00e5a0;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px"></div>
-      <p style="color:#888">Cargando contrato...</p>
+    <!-- ── PASO 1: VALIDACIÓN DNI ── -->
+    <div id="fr-step-dni" style="display:none">
+      <div style="background:#1a1d2e;border-radius:18px;padding:28px 20px;border:1px solid #2a2d3e;text-align:center">
+        <div style="font-size:48px;margin-bottom:12px">🪪</div>
+        <h3 style="font-size:17px;font-weight:800;margin-bottom:6px">Verificá tu identidad</h3>
+        <p style="font-size:13px;color:#888;margin-bottom:22px">Ingresá tu número de DNI para acceder al contrato</p>
+        <div style="position:relative;margin-bottom:14px">
+          <input id="fr-dni-input" type="number" inputmode="numeric" placeholder="Ej: 12345678"
+            style="width:100%;background:#0d0f16;border:2px solid #2a2d3e;border-radius:12px;padding:16px 18px;font-size:22px;font-weight:700;color:#fff;text-align:center;box-sizing:border-box;letter-spacing:3px;outline:none;-moz-appearance:textfield"
+            oninput="frDniChanged(this.value)"
+            onkeydown="if(event.key==='Enter') frValidarDni()">
+        </div>
+        <p id="fr-dni-error" style="color:#ff4060;font-size:13px;margin-bottom:12px;display:none">❌ DNI incorrecto. Verificá e intentá de nuevo.</p>
+        <button id="fr-btn-dni" onclick="frValidarDni()"
+          disabled
+          style="width:100%;background:#00e5a0;border:none;border-radius:12px;padding:16px;font-size:15px;font-weight:800;color:#000;cursor:pointer;opacity:.4;transition:opacity .2s">
+          Continuar →
+        </button>
+        <p style="font-size:11px;color:#555;margin-top:14px">Tu DNI no será almacenado. Solo se usa para verificar tu identidad.</p>
+      </div>
     </div>
 
-    <!-- Error state -->
+    <!-- ── LOADING ── -->
+    <div id="fr-loading" style="display:none;text-align:center;padding:60px 0">
+      <div style="width:40px;height:40px;border:3px solid #1a1d2e;border-top-color:#00e5a0;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px"></div>
+      <p style="color:#888;font-size:14px">Cargando contrato...</p>
+    </div>
+
+    <!-- ── ERROR ── -->
     <div id="fr-error" style="display:none;text-align:center;padding:40px 16px">
-      <p style="font-size:40px;margin-bottom:12px">❌</p>
-      <h3 style="color:#ff4060;margin-bottom:8px">Link inválido o expirado</h3>
+      <p style="font-size:48px;margin-bottom:12px">❌</p>
+      <h3 style="color:#ff4060;margin-bottom:8px;font-size:17px">Link inválido o expirado</h3>
       <p style="color:#888;font-size:13px">Este link de firma ya no es válido.<br>Solicitá uno nuevo a tu asesor.</p>
     </div>
 
-    <!-- Already signed state -->
+    <!-- ── YA FIRMADO ── -->
     <div id="fr-ya-firmado" style="display:none;text-align:center;padding:40px 16px">
-      <p style="font-size:48px;margin-bottom:12px">✅</p>
-      <h3 style="color:#00e5a0;margin-bottom:8px">¡Contrato ya firmado!</h3>
+      <p style="font-size:56px;margin-bottom:12px">✅</p>
+      <h3 style="color:#00e5a0;margin-bottom:8px;font-size:18px">¡Contrato ya firmado!</h3>
       <p id="fr-ya-firmado-fecha" style="color:#888;font-size:13px"></p>
-      <p style="color:#888;font-size:12px;margin-top:12px">Podés cerrar esta ventana.</p>
+      <p style="color:#555;font-size:12px;margin-top:12px">Podés cerrar esta ventana.</p>
     </div>
 
-    <!-- Contract + Signature state -->
+    <!-- ── PASO 2: CONTRATO + FIRMA ── -->
     <div id="fr-content" style="display:none">
-      <!-- Contract summary card -->
-      <div style="background:#1a1d2e;border-radius:16px;padding:20px;margin-bottom:16px;border:1px solid #2a2d3e">
-        <h3 id="fr-titulo" style="font-size:16px;font-weight:700;margin-bottom:14px;color:#fff"></h3>
-        <div id="fr-datos" style="display:grid;gap:8px"></div>
+
+      <!-- Datos del crédito -->
+      <div style="background:#1a1d2e;border-radius:16px;padding:18px;margin-bottom:14px;border:1px solid #2a2d3e">
+        <h3 id="fr-titulo" style="font-size:15px;font-weight:700;margin-bottom:12px;color:#fff"></h3>
+        <div id="fr-datos" style="display:grid;gap:6px"></div>
       </div>
 
-      <!-- Contract text (collapsible) -->
-      <div style="margin-bottom:16px">
-        <button onclick="toggleFrContrato(this)" style="width:100%;background:#1a1d2e;border:1px solid #2a2d3e;border-radius:12px;padding:12px 16px;color:#00e5a0;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+      <!-- Texto del contrato (colapsable) -->
+      <div style="margin-bottom:14px">
+        <button onclick="toggleFrContrato(this)"
+          style="width:100%;background:#1a1d2e;border:1px solid #2a2d3e;border-radius:12px;padding:12px 16px;color:#00e5a0;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-family:inherit">
           <span>📄 Ver texto completo del contrato</span><span id="fr-contrato-arrow">▼</span>
         </button>
-        <div id="fr-contrato-text" style="display:none;background:#fff;color:#000;border-radius:0 0 12px 12px;padding:20px;font-family:serif;font-size:12px;line-height:1.6;max-height:300px;overflow-y:auto"></div>
+        <div id="fr-contrato-text"
+          style="display:none;background:#fff;color:#000;border-radius:0 0 12px 12px;padding:20px;font-family:serif;font-size:12px;line-height:1.7;max-height:280px;overflow-y:scroll;border:1px solid #ddd;border-top:none"></div>
       </div>
 
-      <!-- Signature canvas -->
-      <div style="background:#1a1d2e;border-radius:16px;padding:20px;margin-bottom:16px;border:1px solid #2a2d3e">
+      <!-- Canvas de firma -->
+      <div style="background:#1a1d2e;border-radius:16px;padding:18px;margin-bottom:14px;border:1px solid #2a2d3e">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <p style="font-weight:700;font-size:14px">✍️ Tu firma</p>
-          <button onclick="limpiarFirmaRemota()" style="background:none;border:1px solid #333;border-radius:8px;padding:6px 12px;color:#888;font-size:12px;cursor:pointer">🗑️ Limpiar</button>
+          <div>
+            <p style="font-weight:700;font-size:14px;margin-bottom:2px">✍️ Tu firma</p>
+            <p style="font-size:11px;color:#666">Firmá con tu dedo o el mouse</p>
+          </div>
+          <button onclick="limpiarFirmaRemota()"
+            style="background:none;border:1px solid #333;border-radius:8px;padding:7px 14px;color:#888;font-size:12px;cursor:pointer;font-family:inherit">
+            🗑️ Limpiar
+          </button>
         </div>
-        <div style="border:2px dashed #333;border-radius:12px;background:#fff;overflow:hidden;position:relative">
-          <canvas id="fr-canvas" width="700" height="200" style="display:block;width:100%;height:180px;touch-action:none;cursor:crosshair"></canvas>
-          <p id="fr-canvas-hint" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;font-size:13px;pointer-events:none;white-space:nowrap">Firmá aquí con tu dedo</p>
+        <div style="border:2px dashed #2a2d3e;border-radius:12px;background:#fff;overflow:hidden;position:relative" id="fr-canvas-wrap">
+          <canvas id="fr-canvas" width="700" height="200"
+            style="display:block;width:100%;height:180px;touch-action:none;cursor:crosshair"></canvas>
+          <p id="fr-canvas-hint"
+            style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#bbb;font-size:14px;pointer-events:none;white-space:nowrap;user-select:none">
+            ✍️ Firmá aquí
+          </p>
         </div>
-        <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">Al firmar, confirmás haber leído y aceptado los términos del crédito</p>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:10px">
+          <div id="fr-firma-indicator" style="width:8px;height:8px;border-radius:50%;background:#333;flex-shrink:0"></div>
+          <p id="fr-firma-status" style="font-size:12px;color:#666">Sin firma todavía</p>
+        </div>
       </div>
 
-      <!-- Submit button -->
-      <button id="fr-btn-firmar" onclick="enviarFirmaRemota()" style="width:100%;background:#00e5a0;border:none;border-radius:14px;padding:18px;font-size:16px;font-weight:700;color:#000;cursor:pointer;margin-bottom:12px">
+      <!-- Botón confirmar (deshabilitado hasta tener firma) -->
+      <button id="fr-btn-firmar" onclick="enviarFirmaRemota()" disabled
+        style="width:100%;background:#00e5a0;border:none;border-radius:14px;padding:18px;font-size:16px;font-weight:800;color:#000;cursor:not-allowed;margin-bottom:10px;opacity:.4;transition:all .25s;font-family:inherit">
         ✅ Confirmar y firmar contrato
       </button>
-      <p style="font-size:11px;color:#555;text-align:center">Esta firma tiene validez contractual. La fecha y hora quedan registradas.</p>
+      <p style="font-size:11px;color:#555;text-align:center;line-height:1.5">
+        Al firmar, confirmás haber leído y aceptado los términos del contrato.<br>
+        La fecha y hora quedan registradas.
+      </p>
     </div>
+
   </div>
 </div>
-
 >
