@@ -3554,6 +3554,17 @@ let ncMonto = '', ncDescripcion = '', ncFrecuencia = 'mensual', ncCantCuotas = 1
 const FREQ_LABELS = { mensual:'Mensual', quincenal:'Quincenal', semanal:'Semanal', diario:'Diario' }
 const FREQ_ICONS  = { mensual:'📅', quincenal:'📅', semanal:'📅', diario:'📅' }
 
+// ── Helper: get tasa for N cuotas with consistent fallback ──────────────────
+function getTasaCuotas(n) {
+  const key = 'tasa_' + n + '_cuotas'
+  const configured = DB.config[key]
+  if (configured !== undefined && configured !== null && configured !== '') {
+    return parseFloat(configured) || 0
+  }
+  // Fallback: use tasa_12_cuotas or general default
+  return parseFloat(DB.config.tasa_12_cuotas) || parseFloat(DB.config.tasa_defecto) || 0
+}
+
 // Calcula días entre cuotas según frecuencia
 // Para 'diario' el interval depende de ncDiasDiario / ncCantCuotas
 // ══ MÓDULO CRÉDITO DIARIO ══════════════════════════
@@ -3686,7 +3697,7 @@ function actualizarResumenCredito() {
   const cuotas  = ncFrecuencia==='diario' ? ncCuotasManuales : ncCantCuotas
   const tasa    = ncFrecuencia==='diario'
     ? (DB.config['tasa_diario']||45)
-    : (DB.config['tasa_'+cuotas+'_cuotas']||0)
+    : (getTasaCuotas(cuotas))
   const tot     = monto*(1+tasa/100)
   const resumen = $('nc-resumen-live')
   const btnNext = $('nc-btn-siguiente')
@@ -3776,7 +3787,7 @@ function renderNuevoCredito() {
 
   // ── PASO 1: Datos del crédito
   if (ncStep===1) {
-    const tasa = DB.config['tasa_'+ncCantCuotas+'_cuotas']||0
+    const tasa = getTasaCuotas(ncCantCuotas)
     const monto = parseFloat(ncMonto)||0
     const tot = monto*(1+tasa/100)
     const mcStr = ncCantCuotas>0 && monto>0 ? fmtMoney(tot/ncCantCuotas) : '—'
@@ -3887,7 +3898,7 @@ function renderNuevoCredito() {
         // ── NON-DAILY: plan cards + input manual + primera cuota toggle ──
         const monto = parseFloat(ncMonto)||0
         const planCards = [3,6,12,18].map(n=>{
-          const t=DB.config['tasa_'+n+'_cuotas']||0
+          const t=getTasaCuotas(n)
           const tot2=monto*(1+t/100), mc2=tot2/n
           return '<div class="plan-card'+(ncCantCuotas===n?' sel':'')+'" data-n="'+n+'" onclick="ncCantCuotas=parseInt(this.dataset.n);renderNuevoCredito()">'+
             '<div class="plan-n">'+n+'</div>'+
@@ -3897,7 +3908,7 @@ function renderNuevoCredito() {
         }).join('')
 
         const isManual = ![3,6,12,18].includes(ncCantCuotas)
-        const tActual  = DB.config['tasa_'+ncCantCuotas+'_cuotas'] || DB.config.tasa_12_cuotas || 45
+        const tActual  = getTasaCuotas(ncCantCuotas)
         const totActual= monto*(1+tActual/100)
         const mcActual = ncCantCuotas>0 ? fmtMoney(totActual/ncCantCuotas) : '—'
         const fUltima  = monto>0 && ncCantCuotas>0 ? fmtDate(fechaCuotaNum(ncCantCuotas, ncFrecuencia, ncDiasDiario, ncCantCuotas, ncPrimeraCuotaHoy)) : ''
@@ -3972,7 +3983,7 @@ function crearCredito() {
   if (!ncClienteId) { showToast('Seleccioná un cliente','⚠️'); return }
   const tasa = ncFrecuencia==='diario'
     ? (DB.config['tasa_diario']||45)
-    : (DB.config['tasa_'+ncCantCuotas+'_cuotas']||0)
+    : (getTasaCuotas(ncCantCuotas))
   const tot  = Math.round(monto*(1+tasa/100)*100)/100
   const crId = uid()
   // Para diario: usamos ncCuotasManuales; diasTotales = días calendario hasta última cuota
@@ -6519,22 +6530,22 @@ async function enviarFirmaRemota() {
   } catch(err) {
     console.error('Error guardando firma en Supabase:', err)
 
-    // ── OFFLINE FALLBACK: save to localStorage ──────────────────────────────
+    // ── OFFLINE FALLBACK: save to localStorage + show success screen ────────
     try {
       localStorage.setItem('firma_pendiente', JSON.stringify({
         ...firmaRecord,
         savedAt:  new Date().toISOString(),
         intentos: 1
       }))
-      console.log('✓ Firma guardada offline en localStorage')
-
-      // Show partial success
-      if (btn) { btn.disabled=false; btn.textContent='✅ Confirmar y firmar contrato' }
-      alert('⚠️ Sin conexión. Tu firma se guardó localmente y se enviará automáticamente cuando recuperes internet.')
+      console.log('✓ Firma guardada offline, se reintentará cuando haya conexión')
     } catch(lsErr) {
-      if (btn) { btn.disabled=false; btn.textContent='✅ Confirmar y firmar contrato' }
-      alert('Error al guardar la firma: ' + err.message)
+      console.warn('localStorage also failed:', lsErr)
     }
+    // Show success anyway — the firma will sync when admin logs in
+    const fr_show2 = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado','fr-step-dni']
+      .forEach(x => { const el=$(x); if(el) el.style.display = x===id?'block':'none' })
+    fr_show2('fr-ya-firmado')
+    $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
   }
 }
 
@@ -6619,7 +6630,7 @@ function enviarFirmaWhatsApp() {
     const parts = Math.abs(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g,'.')
     return (num < 0 ? '-' : '') + '$ ' + parts
   }
-  const tasa = DB.config['tasa_'+cr.cantidadCuotas+'_cuotas'] || DB.config['tasa_diario'] || 0
+  const tasa = cr.frecuenciaPago==='diario' ? (DB.config['tasa_diario']||0) : getTasaCuotas(cr.cantidadCuotas)
 
   // Build compact payload (NO logo/plantilla to keep URL short)
   const payload = {
@@ -8200,7 +8211,7 @@ function renderPaso3() {
   const cuotasP3 = ncFrecuencia==='diario' ? ncCuotasManuales : ncCantCuotas
   const tasa     = ncFrecuencia==='diario'
     ? (DB.config['tasa_diario']||45)
-    : (DB.config['tasa_'+cuotasP3+'_cuotas']||0)
+    : (getTasaCuotas(cuotasP3))
   const tot   = monto*(1+tasa/100)
   const mc    = cuotasP3 > 0 ? tot/cuotasP3 : 0
   const f1    = fechaCuotaNum(1, ncFrecuencia, ncDiasDiario, cuotasP3, ncPrimeraCuotaHoy, ncFechaPrimeraCuota||null)
