@@ -6126,7 +6126,12 @@ async function cargarContratoRemoto(token) {
       const b64    = token.split('-').join('+').split('_').join('/')
       const padded = b64 + '=='.slice(0, (4 - b64.length % 4) % 4)
       const raw    = atob(padded)
-      payload      = JSON.parse(decodeURIComponent(raw))
+      // Try URI-decoded first, then direct JSON parse as fallback
+      try {
+        payload = JSON.parse(decodeURIComponent(raw))
+      } catch(_e) {
+        payload = JSON.parse(raw)
+      }
     } catch(e1) {
       try {
         const raw = atob(token.split('-').join('+').split('_').join('/') + '=='.slice(0,(4-token.length%4)%4))
@@ -6223,6 +6228,9 @@ function frValidarDni() {
 
 // ── Render contract content ────────────────────────────────────────────────
 function frMostrarContrato(payload) {
+  // Reset state for new contract
+  frContratoLeido = false
+  frActualizarEstadoFirma()
   const fmtDate = (s) => s ? new Date(s+'T12:00:00').toLocaleDateString('es-AR') : '—'
 
   $('fr-titulo').textContent = payload.descripcion || 'Contrato de Crédito Personal'
@@ -6258,7 +6266,8 @@ function frMostrarContrato(payload) {
       .replace(/\n/g, '<br>')
     $('fr-contrato-text').innerHTML = txt
   } else {
-    // Default contract text
+    // Default contract text - auto-mark as read (no scroll required)
+    frContratoLeido = true
     $('fr-contrato-text').innerHTML = `
       <p><b>CONTRATO DE CRÉDITO</b></p>
       <p>Por medio del presente instrumento, <b>${payload.empresa||'la empresa'}</b>
@@ -6273,8 +6282,168 @@ function frMostrarContrato(payload) {
   }
 
   $('fr-content').style.display = 'block'
-  setTimeout(initFirmaRemotaCanvas, 100)
+  frActualizarEstadoFirma()  // initial button state
+  setTimeout(initFirmaRemotaCanvas, 150)  // give DOM time to paint
 }
+
+// ════════════════════════════════════════════════════
+// FIRMA REMOTA — Canvas + Accordeón + Validación
+// ════════════════════════════════════════════════════
+let frContratoLeido = false  // true when scrolled to bottom
+
+// ── 1. Accordion: expand contract + scroll-to-bottom lock ─────────────────
+function toggleFrContrato(btn) {
+  const box   = $('fr-contrato-text')
+  const arrow = $('fr-contrato-arrow')
+  if (!box) return
+  const showing = box.style.display !== 'none'
+  box.style.display  = showing ? 'none' : 'block'
+  if (arrow) arrow.textContent = showing ? '▼' : '▲'
+
+  if (!showing) {
+    // Attach scroll listener to detect when user reaches the bottom
+    box.addEventListener('scroll', function onScroll() {
+      const atBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 30
+      if (atBottom && !frContratoLeido) {
+        frContratoLeido = true
+        box.removeEventListener('scroll', onScroll)
+        frActualizarEstadoFirma()  // re-evaluate button state
+        // Visual feedback
+        const arrow2 = $('fr-contrato-arrow')
+        if (arrow2) arrow2.textContent = '✓'
+      }
+    })
+    // If content is short enough to not need scrolling, mark as read
+    setTimeout(() => {
+      if (box.scrollHeight <= box.clientHeight + 10) {
+        frContratoLeido = true
+        frActualizarEstadoFirma()
+      }
+    }, 400)
+    // Also mark read when fully scrolled at any point
+    box.onscroll = () => {
+      if (box.scrollTop + box.clientHeight >= box.scrollHeight - 20) {
+        frContratoLeido = true
+        frActualizarEstadoFirma()
+        box.onscroll = null
+      }
+    }
+  }
+}
+
+// ── 2. Canvas init with mouse + touch (ES2020) ─────────────────────────────
+function initFirmaRemotaCanvas() {
+  const cv = $('fr-canvas')
+  if (!cv) { console.warn('initFirmaRemotaCanvas: fr-canvas not found'); return }
+
+  // Reset state
+  frEmpty   = true
+  frDrawing = false
+
+  // Fresh context
+  frCtx = cv.getContext('2d')
+  frCtx.strokeStyle = '#1a1a2e'
+  frCtx.lineWidth   = 3
+  frCtx.lineCap     = 'round'
+  frCtx.lineJoin    = 'round'
+  frCtx.clearRect(0, 0, cv.width, cv.height)
+
+  // Show hint
+  const hint = $('fr-canvas-hint')
+  if (hint) hint.style.opacity = '1'
+
+  // Remove old listeners via AbortController
+  if (window._frAbort) window._frAbort.abort()
+  window._frAbort = new AbortController()
+  const sig = { signal: window._frAbort.signal }
+
+  // Correct coordinates (accounts for CSS scaling)
+  const getXY = (e) => {
+    const r  = cv.getBoundingClientRect()
+    const sx = r.width  > 0 ? cv.width  / r.width  : 1
+    const sy = r.height > 0 ? cv.height / r.height : 1
+    const s  = (e.touches && e.touches.length > 0) ? e.touches[0] : e
+    return { x: (s.clientX - r.left) * sx, y: (s.clientY - r.top) * sy }
+  }
+
+  // ── Mouse events ──────────────────────────────────────────────────────────
+  cv.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    frDrawing = true
+    frCtx = cv.getContext('2d')  // always get fresh context
+    const p = getXY(e); frCtx.beginPath(); frCtx.moveTo(p.x, p.y)
+    if (hint) hint.style.opacity = '0'
+  }, sig)
+
+  cv.addEventListener('mousemove', (e) => {
+    if (!frDrawing) return
+    const p = getXY(e); frCtx.lineTo(p.x, p.y); frCtx.stroke()
+    if (frEmpty) { frEmpty = false; frActualizarEstadoFirma() }
+  }, sig)
+
+  cv.addEventListener('mouseup',    () => { frDrawing = false }, sig)
+  cv.addEventListener('mouseleave', () => { frDrawing = false }, sig)
+
+  // ── Touch events (iOS/Android) ────────────────────────────────────────────
+  cv.addEventListener('touchstart', (e) => {
+    e.preventDefault()
+    frDrawing = true
+    frCtx = cv.getContext('2d')
+    const p = getXY(e); frCtx.beginPath(); frCtx.moveTo(p.x, p.y)
+    if (hint) hint.style.opacity = '0'
+  }, { ...sig, passive: false })
+
+  cv.addEventListener('touchmove', (e) => {
+    e.preventDefault()
+    if (!frDrawing) return
+    const p = getXY(e); frCtx.lineTo(p.x, p.y); frCtx.stroke()
+    if (frEmpty) { frEmpty = false; frActualizarEstadoFirma() }
+  }, { ...sig, passive: false })
+
+  cv.addEventListener('touchend',    () => { frDrawing = false }, sig)
+  cv.addEventListener('touchcancel', () => { frDrawing = false }, sig)
+
+  frActualizarEstadoFirma()
+  console.log('✓ Canvas firma inicializado (', cv.width, 'x', cv.height, ')')
+}
+
+// ── 3. Clear canvas and reset state ──────────────────────────────────────────
+function limpiarFirmaRemota() {
+  const cv = $('fr-canvas')
+  if (!cv) return
+  frCtx = cv.getContext('2d')
+  frCtx.clearRect(0, 0, cv.width, cv.height)
+  frEmpty   = true
+  frDrawing = false
+  const hint = $('fr-canvas-hint')
+  if (hint) hint.style.opacity = '1'
+  frActualizarEstadoFirma()
+}
+
+// ── 4. Enable/disable submit button based on firma + scroll state ────────────
+function frActualizarEstadoFirma() {
+  const btn       = $('fr-btn-firmar')
+  const indicator = $('fr-firma-indicator')
+  const status    = $('fr-firma-status')
+  if (!btn) return
+
+  const canConfirm = !frEmpty && frContratoLeido
+  btn.disabled       = !canConfirm
+  btn.style.opacity  = canConfirm ? '1' : '.4'
+  btn.style.cursor   = canConfirm ? 'pointer' : 'not-allowed'
+
+  if (!frEmpty && !frContratoLeido) {
+    if (indicator) indicator.style.background = '#f59e0b'
+    if (status)    { status.textContent = '📜 Leé el contrato completo primero'; status.style.color='#f59e0b' }
+  } else if (!frEmpty && frContratoLeido) {
+    if (indicator) indicator.style.background = '#00e5a0'
+    if (status)    { status.textContent = '✓ Firma y contrato listos'; status.style.color='#00e5a0' }
+  } else {
+    if (indicator) indicator.style.background = '#333'
+    if (status)    { status.textContent = 'Sin firma todavía'; status.style.color='#666' }
+  }
+}
+
 
 
 async function enviarFirmaRemota() {
@@ -6282,54 +6451,123 @@ async function enviarFirmaRemota() {
     alert('Por favor, dibujá tu firma antes de continuar.')
     return
   }
+  if (!frContratoLeido) {
+    alert('Por favor, leé el contrato completo antes de firmar.')
+    return
+  }
   if (!frCreditoId) return
 
   const btn = $('fr-btn-firmar')
-  btn.disabled = true
-  btn.textContent = '⏳ Guardando firma...'
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Guardando firma...' }
 
+  const canvas    = $('fr-canvas')
+  if (!canvas) { alert('Error: no se encontró el canvas'); return }
+  const firmaData = canvas.toDataURL('image/png')  // base64 PNG
+  const firmaFecha= new Date().toISOString()
+  const payload   = window._frPayload || {}
+
+  // ── Build record ──────────────────────────────────────────────────────────
+  const firmaRecord = {
+    credito_id:    frCreditoId,
+    firma_data:    firmaData,
+    firma_fecha:   firmaFecha,
+    firmado_desde: 'whatsapp_link',
+    dni_firmante:  payload.dni || null
+  }
+
+  // ── Try saving to Supabase (tabla firmas) ─────────────────────────────────
   try {
-    const canvas = $('fr-canvas')
-    const firmaData  = canvas.toDataURL('image/png')
-    const firmaFecha = new Date().toISOString()
+    const resp = await fetch(SUPA_URL + '/rest/v1/firmas', {
+      method:  'POST',
+      headers: {
+        'apikey':        SUPA_KEY,
+        'Authorization': 'Bearer ' + SUPA_KEY,
+        'Content-Type':  'application/json',
+        'Prefer':        'return=minimal'
+      },
+      body: JSON.stringify(firmaRecord)
+    })
 
-    // INSERT into 'firmas' table (requires anon INSERT policy in Supabase)
-    const resp = await fetch(
-      SUPA_URL + '/rest/v1/firmas',
-      {
-        method: 'POST',
+    if (!resp.ok) {
+      const errText = await resp.text()
+      throw new Error(`HTTP ${resp.status}: ${errText}`)
+    }
+
+    // ── Also try PATCH credito datos (may fail due to RLS — that's OK) ───────
+    try {
+      await fetch(SUPA_URL + '/rest/v1/creditos?id=eq.' + frCreditoId, {
+        method:  'PATCH',
         headers: {
           'apikey':        SUPA_KEY,
           'Authorization': 'Bearer ' + SUPA_KEY,
           'Content-Type':  'application/json',
           'Prefer':        'return=minimal'
         },
-        body: JSON.stringify({
-          credito_id: frCreditoId,
-          firma_data: firmaData,
-          firma_fecha: firmaFecha,
-          firmado_desde: 'whatsapp_link'
-        })
-      }
-    )
+        body: JSON.stringify({ datos: JSON.stringify({ firmaData, firmaFecha, estado_contrato: 'firmada', firmado_desde: 'whatsapp_link' }) })
+      })
+    } catch(e2) { console.warn('PATCH credito failed (RLS - OK):', e2.message) }
 
-    if (!resp.ok) {
-      const errText = await resp.text()
-      throw new Error(`${resp.status}: ${errText}`)
-    }
+    // ── Clear any pending offline firma ───────────────────────────────────────
+    try { localStorage.removeItem('firma_pendiente') } catch(e) {}
 
-    // Show success
-    const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado'].forEach(x => $(x).style.display = x===id?'block':'none')
+    // ── Show success ──────────────────────────────────────────────────────────
+    const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado','fr-step-dni']
+      .forEach(x => { const el=$(x); if(el) el.style.display = x===id?'block':'none' })
     fr_show('fr-ya-firmado')
     $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
 
   } catch(err) {
-    console.error('Error guardando firma:', err)
-    btn.disabled = false
-    btn.textContent = '✅ Confirmar y firmar contrato'
-    alert('Error al guardar la firma: ' + err.message + '\n\nAsegurate de que el administrador configuró la tabla de firmas en Supabase.')
+    console.error('Error guardando firma en Supabase:', err)
+
+    // ── OFFLINE FALLBACK: save to localStorage ──────────────────────────────
+    try {
+      localStorage.setItem('firma_pendiente', JSON.stringify({
+        ...firmaRecord,
+        savedAt:  new Date().toISOString(),
+        intentos: 1
+      }))
+      console.log('✓ Firma guardada offline en localStorage')
+
+      // Show partial success
+      if (btn) { btn.disabled=false; btn.textContent='✅ Confirmar y firmar contrato' }
+      alert('⚠️ Sin conexión. Tu firma se guardó localmente y se enviará automáticamente cuando recuperes internet.')
+    } catch(lsErr) {
+      if (btn) { btn.disabled=false; btn.textContent='✅ Confirmar y firmar contrato' }
+      alert('Error al guardar la firma: ' + err.message)
+    }
   }
 }
+
+// ── Retry pending offline firma ────────────────────────────────────────────
+async function reintentarFirmaPendiente() {
+  let pending = null
+  try {
+    const raw = localStorage.getItem('firma_pendiente')
+    if (!raw) return
+    pending = JSON.parse(raw)
+  } catch(e) { return }
+
+  console.log('🔄 Reintentando firma pendiente...')
+  try {
+    const resp = await fetch(SUPA_URL + '/rest/v1/firmas', {
+      method:  'POST',
+      headers: {
+        'apikey':        SUPA_KEY,
+        'Authorization': 'Bearer ' + SUPA_KEY,
+        'Content-Type':  'application/json',
+        'Prefer':        'return=minimal'
+      },
+      body: JSON.stringify(pending)
+    })
+    if (resp.ok) {
+      localStorage.removeItem('firma_pendiente')
+      console.log('✅ Firma pendiente enviada correctamente')
+    }
+  } catch(e) {
+    console.warn('Reintento fallido, se intentará luego')
+  }
+}
+
 
 
 // ── Sync firma from 'firmas' table back into creditos ──────────────────────
@@ -6375,7 +6613,12 @@ function enviarFirmaWhatsApp() {
   const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
   if (!cli?.celular) { showToast('El cliente no tiene celular registrado','⚠️'); return }
 
-  const fmtM = (n) => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:0}).format(n||0)
+  // Safe formatter: avoids non-breaking spaces (U+202F/U+00A0) that corrupt base64
+  const fmtM = (n) => {
+    const num = Math.round(parseFloat(n)||0)
+    const parts = Math.abs(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g,'.')
+    return (num < 0 ? '-' : '') + '$ ' + parts
+  }
   const tasa = DB.config['tasa_'+cr.cantidadCuotas+'_cuotas'] || DB.config['tasa_diario'] || 0
 
   // Build compact payload (NO logo/plantilla to keep URL short)
@@ -8007,8 +8250,15 @@ $$('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{ if(e.target===o)
 
 // ── Check for ?firma= URL param on load (firma remota via WhatsApp)
 document.addEventListener('DOMContentLoaded', () => { checkFirmaRemota() })
+// Retry offline firma when connection is restored
+window.addEventListener('online', () => {
+  console.log('🌐 Conexión restaurada, reintentando firmas pendientes...')
+  reintentarFirmaPendiente()
+})
 // Also check immediately in case DOMContentLoaded already fired
 if (document.readyState !== 'loading') checkFirmaRemota()
+// Retry pending firma when connectivity restored
+window.addEventListener('online', () => reintentarFirmaPendiente())
 </script>
 
 <script>
