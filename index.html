@@ -2577,6 +2577,8 @@ function doLogin() {
     actualizarLogoEnHeader()
     updateBadges()
     goTo('dashboard')
+    // Sync remote signatures from firmas table → creditos
+    sincronizarFirmasRemota().catch(e => console.warn('Sync firmas:', e.message))
 
   }).catch(err => {
     console.error('Login error:', err)
@@ -3463,6 +3465,7 @@ function renderCreditos() {
           ${cr.estado==='PENDIENTE_APROBACION' && sesion?.esAdmin
             ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();aprobarCredito('${cr.id}')">✅</button> `
             : ''}
+          ${cr.firmaData ? '<span title="Contrato firmado" style="font-size:13px;margin-right:4px">🔏</span>' : ''}
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();verCredito('${cr.id}')">Ver →</button>
         </td>
       </tr>`
@@ -6768,8 +6771,13 @@ async function sincronizarFirmasRemota() {
       }
     })
     guardarDB()
+    updateBadges()
+    // Refresh current page if creditos list is visible
+    const activePage = document.querySelector('.page.active')
+    if (activePage && activePage.id === 'page-creditos') renderCreditos()
+    if (activePage && activePage.id === 'page-dashboard') renderDashboard()
   } catch(e) {
-    console.warn('No se pudo sincronizar firmas (tabla no existe aún):', e.message)
+    console.warn('No se pudo sincronizar firmas:', e.message)
   }
 }
 
