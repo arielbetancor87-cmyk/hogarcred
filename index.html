@@ -3510,7 +3510,7 @@ function verCredito(id) {
         <button class="btn btn-ghost btn-sm" onclick="imprimirCalendario('${id}')">🖨️ Imprimir calendario</button>
         <button class="btn btn-wa btn-sm" onclick="enviarCalendarioWA('${id}')">📲 Enviar por WhatsApp</button>
         <button class="btn btn-ghost btn-sm" onclick="abrirContrato('${id}')">📄 Ver contrato</button>
-      ${cr.firmaData ? '<span class="chip chip-green" style="margin-left:4px;font-size:11px">🔏 Firmado</span>' : '<span class="chip chip-warn" style="margin-left:4px;font-size:11px">⚠️ Sin firma</span>'}
+      ${cr.firmaData ? '<span class="chip chip-green" style="margin-left:4px;font-size:11px">🔏 Firmado</span>' : '<button onclick="sincronizarFirmaCredito(\''+id+'\')" style="background:rgba(255,160,0,.15);border:1px solid rgba(255,160,0,.3);color:#f59e0b;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">⚠️ Sin firma — Sincronizar</button>'}
       </div>
     </div>
     <div class="tbl-wrap" style="max-height:300px;overflow-y:auto">
@@ -6746,10 +6746,75 @@ function prepararPagoMP(idCuota, monto) {
 }
 
 // ── Sync firma from 'firmas' table back into creditos ──────────────────────
+
+// ── Sincronizar firma de un crédito específico ─────────────────────────────
+async function sincronizarFirmaCredito(creditoId) {
+  showToast('🔄 Buscando firma...', '🔄')
+  
+  try {
+    // 1. Check firmas table
+    const firmas = await supa('firmas','GET',null,`?credito_id=eq.${creditoId}&select=*&order=created_at.desc&limit=1`)
+    
+    if (Array.isArray(firmas) && firmas.length > 0) {
+      const firma = firmas[0]
+      const cr = DB.creditos.find(x=>x.id===creditoId)
+      if (cr) {
+        cr.firmaData  = firma.firma_data
+        cr.firmaFecha = firma.firma_fecha
+        // PATCH creditos.datos with firmaData
+        const datosActual = {}
+        try { Object.assign(datosActual, JSON.parse(cr.datos||'{}')) } catch {}
+        datosActual.firmaData  = firma.firma_data
+        datosActual.firmaFecha = firma.firma_fecha
+        await supa('creditos','PATCH',
+          { datos: JSON.stringify({ ...datosActual, firmaData: firma.firma_data, firmaFecha: firma.firma_fecha }) },
+          `?id=eq.${creditoId}`
+        )
+        guardarDB()
+        showToast('✅ Firma sincronizada correctamente', '✅')
+        verCredito(creditoId)  // refresh modal
+        return
+      }
+    }
+
+    // 2. Check localStorage for pending firma
+    try {
+      const pending = JSON.parse(localStorage.getItem('firma_pendiente') || 'null')
+      if (pending && pending.credito_id === creditoId) {
+        // Try to save it now
+        const resp = await supa('firmas','POST', pending, '')
+        if (resp) {
+          localStorage.removeItem('firma_pendiente')
+          // Retry sync
+          await sincronizarFirmaCredito(creditoId)
+          return
+        }
+      }
+    } catch(e) {}
+
+    showToast('⚠️ No se encontró firma para este crédito', '⚠️')
+  } catch(e) {
+    console.error('Error sincronizando firma:', e)
+    showToast('❌ Error al sincronizar: ' + e.message, '❌')
+  }
+}
+
 async function sincronizarFirmasRemota() {
   // For each active credito, check if there's a firma in the 'firmas' table
   // that hasn't been applied yet
   try {
+    // Also process any pending localStorage firma first
+    try {
+      const pending = JSON.parse(localStorage.getItem('firma_pendiente') || 'null')
+      if (pending && pending.credito_id) {
+        const ins = await supa('firmas','POST', pending, '')
+        if (ins !== null) {
+          localStorage.removeItem('firma_pendiente')
+          console.log('✅ Firma pendiente de localStorage enviada a Supabase')
+        }
+      }
+    } catch(e) { console.warn('localStorage firma_pendiente check:', e.message) }
+
     const resp = await supa('firmas', 'GET', null, '?select=*&order=firma_fecha.desc')
     if (!Array.isArray(resp)) return
     resp.forEach(firma => {
@@ -7696,7 +7761,14 @@ async function cargarDesdeSupa() {
     })
 
     DB.creditos = (creditos||[]).map(cr => {
-      const d = typeof cr.datos==='string' ? JSON.parse(cr.datos||'{}') : (cr.datos||{})
+      // datos may be double-encoded (string containing JSON string) - parse up to 2 levels
+      let d = {}
+      try {
+        let raw = cr.datos
+        if (typeof raw === 'string') raw = JSON.parse(raw)
+        if (typeof raw === 'string') raw = JSON.parse(raw)  // double-encoded
+        d = raw || {}
+      } catch(e) { d = {} }
       return {
         id:              cr.id,
         clienteId:       cr.cliente_id,
