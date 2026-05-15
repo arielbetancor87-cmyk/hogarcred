@@ -6754,7 +6754,7 @@ async function mostrarPanelAutogestion(creditoId) {
         <div style="flex-shrink:0">
           ${pagada
             ? '<span style="background:rgba(0,229,160,.12);color:#00e5a0;font-size:11px;font-weight:800;padding:5px 12px;border-radius:20px">✓ PAGADA</span>'
-            : `<button onclick="prepararPagoMP('${q.id}', ${monto})"
+            : `<button id="mp-btn-${q.id}" onclick="prepararPagoMP('${q.id}', ${monto})"
                  style="background:linear-gradient(135deg,#009ee3,#0077c8);border:none;
                         border-radius:10px;padding:9px 14px;cursor:pointer;display:flex;
                         align-items:center;gap:6px;font-weight:800;font-size:12px;
@@ -6775,16 +6775,99 @@ async function mostrarPanelAutogestion(creditoId) {
 
 
 // ── Mercado Pago: placeholder listo para integración ──────────────────────
-function prepararPagoMP(idCuota, monto) {
-  // ── Lista para integración con Mercado Pago Checkout Pro ──────────────────
-  // TODO cuando tengas el backend:
-  //   1. POST /api/mp/preferencia  →  { idCuota, monto }
-  //   2. Responde con { init_point: "https://www.mercadopago.com.ar/checkout/..." }
-  //   3. window.location.href = init_point
-  //
-  console.log('prepararPagoMP → cuota:', idCuota, '| monto:', monto)
-  const montoFmt = fmtMoney(monto || 0)
-  alert('💙 Mercado Pago\n\nMonto a pagar: ' + montoFmt + '\n\nIntegración disponible próximamente.')
+async function prepararPagoMP(idCuota, monto) {
+  // ── Mercado Pago Checkout Pro ─────────────────────────────────────────────
+  // Llama a /api/mp-preferencia (Vercel Function) que crea la preferencia en MP
+  // y devuelve el init_point URL para redirigir al cliente
+
+  // Obtener datos adicionales de la cuota
+  const cuota  = DB.cuotas?.find(q => q.id === idCuota)
+  const credito= cuota ? DB.creditos?.find(cr => cr.id === cuota.creditoId) : null
+  const cliente= credito ? DB.clientes?.find(cl => cl.id === credito.clienteId) : null
+  const payload= window._frPayload || {}
+
+  // Mostrar estado de carga en el botón
+  const btnId = 'mp-btn-' + idCuota
+  const btn   = document.getElementById(btnId)
+  const originalHtml = btn?.innerHTML
+  if (btn) {
+    btn.disabled  = true
+    btn.innerHTML = '<span style="font-size:13px">⏳ Procesando...</span>'
+  }
+
+  try {
+    const resp = await fetch('/api/mp-preferencia', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idCuota,
+        monto:         Math.round(parseFloat(monto)),
+        descripcion:   `${credito?.descripcion || 'Crédito'} — Cuota ${cuota?.numeroCuota || ''}`,
+        emailCliente:  cliente?.email || payload?.email || '',
+        creditoId:     credito?.id || '',
+        numeroCuota:   cuota?.numeroCuota || '',
+      })
+    })
+
+    const data = await resp.json()
+
+    if (!resp.ok || !data.init_point) {
+      throw new Error(data.error || 'No se pudo crear la preferencia de pago')
+    }
+
+    // ── En testing usar sandbox_init_point, en producción usar init_point ────
+    const MP_TESTING = !!(DB.config?.mp_testing ?? true) // true por defecto hasta configurar
+    const url = MP_TESTING ? (data.sandbox_init_point || data.init_point) : data.init_point
+
+    // Guardar cuota pendiente de confirmación antes de redirigir
+    try { localStorage.setItem('mp_cuota_pendiente', JSON.stringify({ idCuota, monto, creditoId: credito?.id })) } catch(e) {}
+
+    // Redirigir al checkout de MP
+    window.location.href = url
+
+  } catch(err) {
+    console.error('prepararPagoMP error:', err)
+
+    // Restaurar botón
+    if (btn) { btn.disabled = false; btn.innerHTML = originalHtml }
+
+    // Mostrar error amigable
+    const msg = err.message.includes('mp_access_token') || err.message.includes('Access Token')
+      ? '⚙️ Mercado Pago aún no está configurado.\n\nEl administrador debe agregar el Access Token en Vercel.'
+      : '❌ Error al conectar con Mercado Pago:\n' + err.message
+
+    alert(msg)
+  }
+}
+
+// ── Verificar retorno de pago MP (se llama en window.onload) ───────────────
+function verificarRetornoPagoMP() {
+  const params = new URLSearchParams(window.location.search)
+  const estado = params.get('pago')
+  const cuotaId= params.get('cuota')
+  if (!estado || !cuotaId) return
+
+  // Limpiar parámetros de la URL sin recargar
+  const cleanUrl = window.location.pathname
+  window.history.replaceState({}, '', cleanUrl)
+
+  if (estado === 'ok') {
+    // Pago aprobado → actualizar cuota localmente (el webhook ya actualizó Supabase)
+    const cuota = DB.cuotas?.find(q => q.id === cuotaId)
+    if (cuota) {
+      cuota.estado    = 'PAGADA'
+      cuota.fechaPago = new Date().toISOString().split('T')[0]
+      guardarDB()
+      updateBadges()
+    }
+    try { localStorage.removeItem('mp_cuota_pendiente') } catch(e) {}
+    showToast('✅ ¡Pago aprobado por Mercado Pago!', '💙')
+
+  } else if (estado === 'error') {
+    showToast('❌ El pago fue rechazado. Intentá de nuevo.', '❌')
+  } else if (estado === 'pendiente') {
+    showToast('⏳ Pago pendiente de acreditación.', '⏳')
+  }
 }
 
 
@@ -8636,6 +8719,7 @@ window.addEventListener('online', () => {
 })
 // Also check immediately in case DOMContentLoaded already fired
 if (document.readyState !== 'loading') checkFirmaRemota()
+if (document.readyState !== 'loading') verificarRetornoPagoMP()
 // Retry pending firma when connectivity restored
 window.addEventListener('online', () => reintentarFirmaPendiente())
 </script>
