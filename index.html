@@ -1331,12 +1331,12 @@ select.form-input option{background:var(--s2)}
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
             <div id="cr-avatar" style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,var(--acc3),var(--acc));display:flex;align-items:center;justify-content:center;font-family:Syne,sans-serif;font-weight:800;font-size:16px;color:#000;flex-shrink:0"></div>
             <div style="flex:1;min-width:0">
-              <p id="cr-nombre" style="font-family:Syne,sans-serif;font-weight:800;font-size:18px;margin-bottom:2px"></p>
+              <p id="cr-nombre" style="font-family:Syne,sans-serif;font-weight:800;font-size:16px;margin-bottom:2px;word-break:break-word;line-height:1.2"></p>
               <p id="cr-info" style="font-size:12px;color:var(--muted)"></p>
             </div>
-            <div id="cr-deuda-total" style="text-align:right">
+            <div id="cr-deuda-total" style="text-align:right;flex-shrink:0;max-width:45%">
               <p style="font-size:11px;color:var(--muted);margin-bottom:2px">DEUDA TOTAL</p>
-              <p id="cr-deuda-monto" style="font-family:Syne,sans-serif;font-weight:800;font-size:22px;color:var(--danger)"></p>
+              <p id="cr-deuda-monto" style="font-family:Syne,sans-serif;font-weight:800;font-size:18px;color:var(--danger);word-break:break-all;line-height:1.2"></p>
             </div>
           </div>
         </div>
@@ -6472,15 +6472,15 @@ async function enviarFirmaRemota() {
   if (!frCreditoId) return
 
   const btn = $('fr-btn-firmar')
-  if (btn) { btn.disabled=true; btn.textContent='⏳ Guardando firma...' }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando firma...' }
 
-  const canvas    = $('fr-canvas')
-  if (!canvas) { alert('Error: no se encontró el canvas'); return }
-  const firmaData = canvas.toDataURL('image/png')  // base64 PNG
-  const firmaFecha= new Date().toISOString()
-  const payload   = window._frPayload || {}
+  const canvas = $('fr-canvas')
+  if (!canvas) { alert('Error: canvas no encontrado'); return }
 
-  // ── Build record ──────────────────────────────────────────────────────────
+  const firmaData  = canvas.toDataURL('image/png')
+  const firmaFecha = new Date().toISOString()
+  const payload    = window._frPayload || {}
+
   const firmaRecord = {
     credito_id:    frCreditoId,
     firma_data:    firmaData,
@@ -6489,7 +6489,12 @@ async function enviarFirmaRemota() {
     dni_firmante:  payload.dni || null
   }
 
-  // ── Try saving to Supabase (tabla firmas) ─────────────────────────────────
+  // Helper: hide all sections except one
+  const fr_show = (id) =>
+    ['fr-step-dni','fr-loading','fr-error','fr-content','fr-ya-firmado']
+      .forEach(x => { const el = $(x); if (el) el.style.display = x === id ? 'block' : 'none' })
+
+  // ── Guardar en Supabase ────────────────────────────────────────────────────
   try {
     const resp = await fetch(SUPA_URL + '/rest/v1/firmas', {
       method:  'POST',
@@ -6501,13 +6506,9 @@ async function enviarFirmaRemota() {
       },
       body: JSON.stringify(firmaRecord)
     })
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + await resp.text())
 
-    if (!resp.ok) {
-      const errText = await resp.text()
-      throw new Error(`HTTP ${resp.status}: ${errText}`)
-    }
-
-    // ── Also try PATCH credito datos (may fail due to RLS — that's OK) ───────
+    // También actualizar credito.datos (puede fallar por RLS, no es crítico)
     try {
       await fetch(SUPA_URL + '/rest/v1/creditos?id=eq.' + frCreditoId, {
         method:  'PATCH',
@@ -6517,44 +6518,35 @@ async function enviarFirmaRemota() {
           'Content-Type':  'application/json',
           'Prefer':        'return=minimal'
         },
-        body: JSON.stringify({ datos: JSON.stringify({ firmaData, firmaFecha, estado_contrato: 'firmada', firmado_desde: 'whatsapp_link' }) })
+        body: JSON.stringify({
+          datos: JSON.stringify({ firmaData, firmaFecha, estado_contrato: 'firmada' })
+        })
       })
-    } catch(e2) { console.warn('PATCH credito failed (RLS - OK):', e2.message) }
+    } catch(e) { console.warn('PATCH credito (RLS):', e.message) }
 
-    // ── Clear any pending offline firma ───────────────────────────────────────
     try { localStorage.removeItem('firma_pendiente') } catch(e) {}
-
-    // ── Show success ──────────────────────────────────────────────────────────
-    const fr_show = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado','fr-step-dni']
-      .forEach(x => { const el=$(x); if(el) el.style.display = x===id?'block':'none' })
-    fr_show('fr-ya-firmado')
-    $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
-    // Show self-service panel after signing
-    setTimeout(() => mostrarPanelAutogestion(frCreditoId), 1500)
+    console.log('✅ Firma guardada en Supabase')
 
   } catch(err) {
-    console.error('Error guardando firma en Supabase:', err)
-
-    // ── OFFLINE FALLBACK: save to localStorage + show success screen ────────
+    // Offline fallback — guardar en localStorage
+    console.warn('Supabase no disponible, guardando offline:', err.message)
     try {
       localStorage.setItem('firma_pendiente', JSON.stringify({
-        ...firmaRecord,
-        savedAt:  new Date().toISOString(),
-        intentos: 1
+        ...firmaRecord, savedAt: new Date().toISOString()
       }))
-      console.log('✓ Firma guardada offline, se reintentará cuando haya conexión')
-    } catch(lsErr) {
-      console.warn('localStorage also failed:', lsErr)
-    }
-    // Show success anyway — the firma will sync when admin logs in
-    const fr_show2 = (id) => ['fr-loading','fr-error','fr-content','fr-ya-firmado','fr-step-dni']
-      .forEach(x => { const el=$(x); if(el) el.style.display = x===id?'block':'none' })
-    fr_show2('fr-ya-firmado')
-    $('fr-ya-firmado-fecha').textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
-    // Show self-service panel after signing
-    setTimeout(() => mostrarPanelAutogestion(frCreditoId), 1500)
+    } catch(e) { console.warn('localStorage fallback también falló') }
   }
+
+  // ── Ocultar contrato y mostrar panel de autogestión ───────────────────────
+  // Mostramos brevemente el estado "firmado" y luego el panel de autogestión
+  fr_show('fr-ya-firmado')
+  const fechaEl = $('fr-ya-firmado-fecha')
+  if (fechaEl) fechaEl.textContent = 'Firmado el ' + new Date().toLocaleString('es-AR')
+
+  // Transition al panel de autogestión después de 1.2s
+  setTimeout(() => mostrarPanelAutogestion(frCreditoId), 1200)
 }
+
 
 // ── Retry pending offline firma ────────────────────────────────────────────
 async function reintentarFirmaPendiente() {
@@ -6598,152 +6590,161 @@ async function mostrarPanelAutogestion(creditoId) {
   const panel = $('panel-autogestion')
   if (!panel) return
 
-  // Ocultar sección de firma, mostrar autogestión
-  const content = $('fr-content')
-  if (content) content.style.display = 'none'
+  // ── Ocultar sección de firma, mostrar panel ───────────────────────────────
+  ['fr-step-dni','fr-loading','fr-error','fr-content','fr-ya-firmado']
+    .forEach(id => { const el=$(id); if(el) el.style.display='none' })
   panel.style.display = 'block'
-
-  // Scroll to top
   window.scrollTo({ top: 0, behavior: 'smooth' })
 
-  // Try to get cuotas from Supabase
-  let cuotas = []
-  let credito = null
   const payload = window._frPayload || {}
 
+  // ── Obtener datos del crédito y cuotas desde Supabase ─────────────────────
+  let cuotas   = []
+  let credito  = null
   try {
     const [cResp, qResp] = await Promise.all([
       fetch(SUPA_URL + '/rest/v1/creditos?id=eq.' + creditoId + '&select=*', {
         headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
       }),
-      fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + creditoId + '&select=*&order=numero_cuota.asc', {
+      fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + creditoId +
+            '&select=*&order=numero_cuota.asc', {
         headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
       })
     ])
-    if (cResp.ok) { const arr = await cResp.json(); credito = arr[0] }
-    if (qResp.ok) { cuotas = await qResp.json() }
-  } catch(e) {
-    console.warn('Could not fetch from Supabase (RLS), using payload data:', e.message)
-  }
+    if (cResp.ok) { const arr = await cResp.json(); credito = arr[0] || null }
+    if (qResp.ok) cuotas = await qResp.json()
+  } catch(e) { console.warn('Panel autogestión: no se pudo cargar de Supabase:', e.message) }
 
-  // Nombre del cliente
-  const nombre = payload.titular ? payload.titular.split(' ')[0] : 'Cliente'
-  const saludo = $('ag-saludo')
-  if (saludo) saludo.textContent = '¡Hola, ' + nombre + '!'
-
-  // Si no hay cuotas de Supabase, generar desde payload
-  if (!cuotas.length && payload.cuotas && payload.monto) {
-    const montoPorCuota = parseFloat((payload.total||payload.monto).replace(/[$.]/g,'').replace(',','.')) / parseInt(payload.cuotas)
-    const primeraCuota = payload.primeraCuota || new Date().toISOString().split('T')[0]
-    const freq = payload.frecuencia || 'mensual'
-    cuotas = Array.from({ length: parseInt(payload.cuotas) }, (_, i) => {
-      const d = new Date(primeraCuota + 'T12:00:00')
+  // ── Fallback: generar cuotas desde payload si Supabase no las devolvió ─────
+  if (!cuotas.length && payload.cuotas && payload.total) {
+    const totalNum  = parseFloat(String(payload.total).replace(/[^0-9,]/g,'').replace(',','.')) || 0
+    const nCuotas   = parseInt(payload.cuotas) || 1
+    const mcNum     = Math.round(totalNum / nCuotas)
+    const freq      = payload.frecuencia || 'mensual'
+    const primera   = payload.primeraCuota || new Date().toISOString().split('T')[0]
+    cuotas = Array.from({ length: nCuotas }, (_, i) => {
+      const d = new Date(primera + 'T12:00:00')
       if (i > 0) {
-        if (freq === 'mensual')   d.setMonth(d.getMonth() + i)
+        if      (freq === 'mensual')   d.setMonth(d.getMonth() + i)
         else if (freq === 'quincenal') d.setDate(d.getDate() + i * 15)
         else if (freq === 'semanal')   d.setDate(d.getDate() + i * 7)
         else                           d.setDate(d.getDate() + i)
       }
       return {
-        id: 'local_' + i,
-        numero_cuota: i + 1,
-        fecha_vencimiento: d.toISOString().split('T')[0],
-        monto_original: montoPorCuota,
-        monto_recargo: 0,
-        estado: 'PENDIENTE'
+        id:                 creditoId + '_q' + (i + 1),
+        numero_cuota:       i + 1,
+        fecha_vencimiento:  d.toISOString().split('T')[0],
+        monto_original:     mcNum,
+        monto_recargo:      0,
+        estado:             'PENDIENTE'
       }
     })
   }
 
-  // Calcular saldo
+  // ── Calcular saldo ─────────────────────────────────────────────────────────
+  const hoy       = new Date(); hoy.setHours(0,0,0,0)
   const pendientes = cuotas.filter(q => q.estado !== 'PAGADA')
   const pagadas    = cuotas.filter(q => q.estado === 'PAGADA')
-  const saldoTotal = pendientes.reduce((s,q) => s + parseFloat(q.monto_original||0) + parseFloat(q.monto_recargo||0), 0)
-  const totalCuotas= cuotas.length
+  const saldoTotal = pendientes.reduce((s, q) =>
+    s + parseFloat(q.monto_original || 0) + parseFloat(q.monto_recargo || 0), 0)
+  const total = cuotas.length
 
-  // Saldo total
+  // ── Nombre del cliente ─────────────────────────────────────────────────────
+  const nombre   = payload.titular ? payload.titular.split(' ')[0] : 'Cliente'
+  const saludo   = $('ag-saludo')
+  if (saludo) saludo.textContent = '¡Hola, ' + nombre + '! 👋'
+
+  // ── Saldo total ────────────────────────────────────────────────────────────
   const saldoEl = $('ag-saldo-total')
-  if (saldoEl) saldoEl.textContent = saldoTotal > 0
-    ? '$ ' + Math.round(saldoTotal).toLocaleString('es-AR')
-    : '$ 0'
+  if (saldoEl) saldoEl.textContent = fmtMoney(saldoTotal)
 
-  // Estado cuotas
+  // ── Estado cuotas ──────────────────────────────────────────────────────────
   const cuotasEl = $('ag-cuotas-estado')
-  if (cuotasEl) cuotasEl.textContent = pagadas.length + '/' + totalCuotas + ' pagadas'
+  if (cuotasEl) cuotasEl.textContent = pagadas.length + '/' + total + ' pagadas'
 
-  // Barra de progreso
-  const pct = totalCuotas > 0 ? Math.round(pagadas.length / totalCuotas * 100) : 0
+  // ── Barra de progreso ──────────────────────────────────────────────────────
+  const pct = total > 0 ? Math.round(pagadas.length / total * 100) : 0
   const bar = $('ag-progreso-bar')
   const txt = $('ag-progreso-texto')
-  if (bar) setTimeout(() => bar.style.width = pct + '%', 200)
+  if (bar) setTimeout(() => { bar.style.width = pct + '%' }, 200)
   if (txt) txt.textContent = pct + '% completado'
 
-  // Badge pendientes
+  // ── Badge pendientes ───────────────────────────────────────────────────────
   const badge = $('ag-cuotas-pendientes-badge')
-  if (badge) badge.textContent = pendientes.length + ' pendiente' + (pendientes.length !== 1 ? 's' : '')
+  if (badge) badge.textContent = pendientes.length +
+    ' pendiente' + (pendientes.length !== 1 ? 's' : '')
 
-  // Render lista de cuotas
+  // ── Lista de cuotas ────────────────────────────────────────────────────────
   const lista = $('ag-lista-cuotas')
   if (!lista) return
 
-  const fmtDate = (s) => s ? new Date(s + 'T12:00:00').toLocaleDateString('es-AR', { day:'numeric', month:'short', year:'numeric' }) : '—'
-  const fmtM    = (n) => '$ ' + Math.round(n).toLocaleString('es-AR')
-  const hoy     = new Date(); hoy.setHours(0,0,0,0)
+  if (!cuotas.length) {
+    lista.innerHTML = '<div style="padding:24px;text-align:center;color:#666;font-size:13px">Sin cuotas disponibles</div>'
+    return
+  }
 
-  lista.innerHTML = cuotas.length === 0
-    ? '<div style="padding:24px;text-align:center;color:#666">Sin cuotas disponibles</div>'
-    : cuotas.map((q, i) => {
-        const pagada  = q.estado === 'PAGADA'
-        const vence   = new Date(q.fecha_vencimiento + 'T12:00:00')
-        const vencida = !pagada && vence < hoy
-        const monto   = parseFloat(q.monto_original||0) + parseFloat(q.monto_recargo||0)
-        const border  = i < cuotas.length - 1 ? 'border-bottom:1px solid #2a2d3e;' : ''
+  lista.innerHTML = cuotas.map((q, i) => {
+    const pagada  = q.estado === 'PAGADA'
+    const vence   = new Date(q.fecha_vencimiento + 'T12:00:00')
+    const vencida = !pagada && vence < hoy
+    const monto   = parseFloat(q.monto_original || 0) + parseFloat(q.monto_recargo || 0)
+    const borde   = i < cuotas.length - 1 ? 'border-bottom:1px solid #2a2d3e;' : ''
+    const color   = pagada ? '#00e5a0' : vencida ? '#ff4060' : '#fff'
+    const bgNum   = pagada ? 'rgba(0,229,160,.12)' : vencida ? 'rgba(255,64,96,.12)' : 'rgba(0,153,255,.1)'
 
-        return `<div style="${border}padding:14px 16px;display:flex;align-items:center;gap:12px">
-          <!-- Número -->
-          <div style="width:32px;height:32px;border-radius:50%;background:${pagada?'rgba(0,229,160,.12)':vencida?'rgba(255,64,96,.12)':'rgba(0,153,255,.1)'};
-               display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <span style="font-size:11px;font-weight:800;color:${pagada?'#00e5a0':vencida?'#ff4060':'#0099ff'}">${q.numero_cuota}</span>
-          </div>
-          <!-- Info -->
-          <div style="flex:1;min-width:0">
-            <p style="font-size:13px;font-weight:700;color:#fff;margin-bottom:2px">
-              Cuota ${q.numero_cuota} — ${fmtDate(q.fecha_vencimiento)}
-              ${vencida ? '<span style="font-size:10px;color:#ff4060;margin-left:6px">VENCIDA</span>' : ''}
-            </p>
-            <p style="font-size:14px;font-weight:800;color:${pagada?'#00e5a0':vencida?'#ff4060':'#fff'}">${fmtM(monto)}</p>
-          </div>
-          <!-- Estado / Acción -->
-          <div style="flex-shrink:0">
-            ${pagada
-              ? '<span style="background:rgba(0,229,160,.12);color:#00e5a0;font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px">✓ PAGADA</span>'
-              : `<button onclick="prepararPagoMP('${q.id}', ${monto})"
-                   style="background:linear-gradient(135deg,#009ee3,#0077c8);border:none;border-radius:10px;
-                          padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#fff">
-                   <svg width="16" height="16" viewBox="0 0 32 32" fill="none">
-                     <circle cx="16" cy="16" r="16" fill="#009ee3"/>
-                     <path d="M8 20c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-                     <circle cx="16" cy="20" r="2.5" fill="#fff"/>
-                   </svg>
-                   Pagar
-                 </button>`
-            }
-          </div>
-        </div>`
-      }).join('')
+    return `
+      <div style="${borde}padding:14px 16px;display:flex;align-items:center;gap:12px">
+        <!-- Número de cuota -->
+        <div style="width:32px;height:32px;border-radius:50%;background:${bgNum};
+             display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:11px;font-weight:800;color:${color}">${q.numero_cuota}</span>
+        </div>
+        <!-- Datos -->
+        <div style="flex:1;min-width:0">
+          <p style="font-size:13px;font-weight:700;color:#fff;margin-bottom:2px">
+            Cuota ${q.numero_cuota}
+            ${vencida ? '<span style="font-size:10px;color:#ff4060;margin-left:6px;font-weight:800">VENCIDA</span>' : ''}
+            <span style="color:#888;font-weight:400"> · ${fmtDate(q.fecha_vencimiento)}</span>
+          </p>
+          <p style="font-size:16px;font-weight:800;color:${color}">${fmtMoney(monto)}</p>
+        </div>
+        <!-- Acción -->
+        <div style="flex-shrink:0">
+          ${pagada
+            ? '<span style="background:rgba(0,229,160,.12);color:#00e5a0;font-size:11px;font-weight:800;padding:5px 12px;border-radius:20px">✓ PAGADA</span>'
+            : `<button onclick="prepararPagoMP('${q.id}', ${monto})"
+                 style="background:linear-gradient(135deg,#009ee3,#0077c8);border:none;
+                        border-radius:10px;padding:9px 14px;cursor:pointer;display:flex;
+                        align-items:center;gap:6px;font-weight:800;font-size:12px;
+                        color:#fff;font-family:inherit;touch-action:manipulation">
+                 <svg width="14" height="14" viewBox="0 0 32 32" fill="none">
+                   <circle cx="16" cy="16" r="16" fill="#ffffff33"/>
+                   <path d="M8 20c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#fff" stroke-width="2.5"
+                         stroke-linecap="round" fill="none"/>
+                   <circle cx="16" cy="20" r="2.5" fill="#fff"/>
+                 </svg>
+                 Pagar
+               </button>`
+          }
+        </div>
+      </div>`
+  }).join('')
 }
+
 
 // ── Mercado Pago: placeholder listo para integración ──────────────────────
 function prepararPagoMP(idCuota, monto) {
-  // TODO: integrar con Mercado Pago Checkout Pro
-  // 1. Llamar a tu backend con: { idCuota, monto }
-  // 2. Backend crea preferencia MP y devuelve init_point URL
-  // 3. Redirigir al checkout de MP
-  // 
-  // Por ahora, confirmación visual:
-  const fmtM = (n) => '$ ' + Math.round(n).toLocaleString('es-AR')
-  alert('💙 Mercado Pago\n\nVas a pagar la cuota #' + idCuota.split('_').pop() + '\nMonto: ' + fmtM(monto) + '\n\n(Integración con Mercado Pago próximamente)')
+  // ── Lista para integración con Mercado Pago Checkout Pro ──────────────────
+  // TODO cuando tengas el backend:
+  //   1. POST /api/mp/preferencia  →  { idCuota, monto }
+  //   2. Responde con { init_point: "https://www.mercadopago.com.ar/checkout/..." }
+  //   3. window.location.href = init_point
+  //
+  console.log('prepararPagoMP → cuota:', idCuota, '| monto:', monto)
+  const montoFmt = fmtMoney(monto || 0)
+  alert('💙 Mercado Pago\n\nMonto a pagar: ' + montoFmt + '\n\nIntegración disponible próximamente.')
 }
+
 
 // ── Sync firma from 'firmas' table back into creditos ──────────────────────
 
@@ -8275,26 +8276,100 @@ function cobrarSeleccionadas() {
   if (crCuotasSeleccionadas.size === 0) return
   const ids = [...crCuotasSeleccionadas]
   if (ids.length === 1) {
-    // Single: open normal cobro modal
     abrirCobro(ids[0])
     return
   }
-  // Multiple: show summary and confirm
+  abrirModalCobroMultiple(ids)
+}
+
+// ── Modal cobro múltiple con selector de método ───────────────────────────
+function abrirModalCobroMultiple(ids) {
   const total = ids.reduce((s,id) => {
     const q = DB.cuotas.find(x=>x.id===id)
     return s + (q ? parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0) : 0)
   }, 0)
   const cli = DB.clientes.find(x=>x.id===crClienteId)
-  const confirm = window.confirm(
-    `¿Cobrar ${ids.length} cuotas a ${cli?.nombreApellido}?
+  const metodos = [
+    { id:'EFECTIVO',      icon:'💵', label:'Efectivo' },
+    { id:'TRANSFERENCIA', icon:'🏦', label:'Transf.' },
+    { id:'DEBITO',        icon:'💳', label:'Débito' },
+    { id:'CREDITO',       icon:'💰', label:'Crédito' },
+    { id:'MP',            icon:'💙', label:'Mercado Pago' },
+  ]
+  const cuotasHtml = ids.map(id => {
+    const q  = DB.cuotas.find(x=>x.id===id)
+    const cr = q ? DB.creditos.find(x=>x.id===q.creditoId) : null
+    const m  = q ? parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0) : 0
+    return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a1d2e;font-size:13px">' +
+      '<span style="color:#aaa">Cuota ' + (q?.numeroCuota||'?') + ' · ' + (cr?.descripcion||'') + '</span>' +
+      '<span style="font-weight:700;color:#fff">' + fmtMoney(m) + '</span></div>'
+  }).join('')
+  const metodosHtml = metodos.map(m =>
+    '<button onclick="seleccionarMetodoMulti(\'' + m.id + '\')" id="mm-' + m.id + '" ' +
+    'style="background:' + (m.id==='EFECTIVO'?'rgba(0,229,160,.15)':'#0d0f16') + ';' +
+    'border:2px solid ' + (m.id==='EFECTIVO'?'var(--acc)':'#2a2d3e') + ';' +
+    'border-radius:12px;padding:10px 4px;cursor:pointer;display:flex;flex-direction:column;' +
+    'align-items:center;gap:4px;font-family:inherit;transition:all .15s">' +
+    '<span style="font-size:20px">' + m.icon + '</span>' +
+    '<span style="font-size:10px;font-weight:700;color:#fff">' + m.label + '</span></button>'
+  ).join('')
+  const html =
+    '<div id="modal-cobro-multiple" onclick="if(event.target===this)cerrarModalCobroMultiple()" ' +
+    'style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;' +
+    'display:flex;align-items:flex-end;justify-content:center">' +
+    '<div style="background:#1a1d2e;border-radius:20px 20px 0 0;width:100%;max-width:480px;' +
+    'padding:24px 20px 40px;border-top:1px solid #2a2d3e">' +
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
+    '<div><h3 style="font-size:17px;font-weight:800;color:#fff;margin-bottom:2px">Cobrar ' + ids.length + ' cuotas</h3>' +
+    '<p style="font-size:13px;color:#888">' + (cli?.nombreApellido||'') + '</p></div>' +
+    '<p style="font-size:22px;font-weight:800;color:#00e5a0;font-family:Syne,sans-serif">' + fmtMoney(total) + '</p></div>' +
+    '<div style="background:#0d0f16;border-radius:12px;padding:12px 14px;margin-bottom:16px;max-height:130px;overflow-y:auto">' +
+    cuotasHtml + '</div>' +
+    '<p style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:600">Método de pago</p>' +
+    '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px">' +
+    metodosHtml + '</div>' +
+    '<div id="multi-ref-wrap" style="display:none;margin-bottom:14px">' +
+    '<input id="multi-ref-input" type="text" placeholder="Referencia / N° operación (opcional)" ' +
+    'style="width:100%;background:#0d0f16;border:1px solid #2a2d3e;border-radius:10px;' +
+    'padding:12px 14px;color:#fff;font-size:14px;box-sizing:border-box;font-family:inherit"></div>' +
+    '<button id="multi-btn-confirmar" onclick="confirmarCobroMultiple()" ' +
+    'style="width:100%;background:#00e5a0;border:none;border-radius:14px;padding:16px;' +
+    'font-size:16px;font-weight:800;color:#000;cursor:pointer;font-family:inherit;margin-bottom:8px">' +
+    '✅ Confirmar — ' + fmtMoney(total) + '</button>' +
+    '<button onclick="cerrarModalCobroMultiple()" ' +
+    'style="width:100%;background:none;border:none;padding:10px;font-size:14px;color:#666;cursor:pointer;font-family:inherit">' +
+    'Cancelar</button></div></div>'
+  document.body.insertAdjacentHTML('beforeend', html)
+  window._multiCobroIds    = ids
+  window._multiCobroMetodo = 'EFECTIVO'
+  window._multiCobroTotal  = total
+}
 
-Total: ${fmtMoney(total)}
+function seleccionarMetodoMulti(metodoId) {
+  window._multiCobroMetodo = metodoId
+  ;['EFECTIVO','TRANSFERENCIA','DEBITO','CREDITO','MP'].forEach(m => {
+    const btn = document.getElementById('mm-' + m)
+    if (!btn) return
+    const sel = m === metodoId
+    btn.style.background  = sel ? 'rgba(0,229,160,.15)' : '#0d0f16'
+    btn.style.borderColor = sel ? 'var(--acc)' : '#2a2d3e'
+  })
+  const refWrap = document.getElementById('multi-ref-wrap')
+  if (refWrap) refWrap.style.display = metodoId === 'EFECTIVO' ? 'none' : 'block'
+}
 
-Cada cuota se registrará como EFECTIVO.`
-  )
-  if (!confirm) return
+function cerrarModalCobroMultiple() {
+  const m = document.getElementById('modal-cobro-multiple')
+  if (m) m.remove()
+}
 
-  // Register each cuota as paid
+function confirmarCobroMultiple() {
+  const ids    = window._multiCobroIds    || []
+  const metodo = window._multiCobroMetodo || 'EFECTIVO'
+  const refEl  = document.getElementById('multi-ref-input')
+  const ref    = refEl ? refEl.value.trim() || null : null
+  const total  = window._multiCobroTotal  || 0
+
   ids.forEach(cuotaId => {
     const q = DB.cuotas.find(x=>x.id===cuotaId)
     if (!q) return
@@ -8302,33 +8377,33 @@ Cada cuota se registrará como EFECTIVO.`
     const monto = parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0)
     const cobranza = {
       id:uid(), cuotaId:q.id, usuarioId:sesion.id,
-      montoCobrado:monto, metodoPago:'EFECTIVO',
-      referenciaPago:null, esParcial:false, sinRecargo:false,
+      montoCobrado:monto, metodoPago:metodo,
+      referenciaPago:ref, esParcial:false, sinRecargo:false,
       montoOriginalCuota:monto,
       anulada:false, anuladaPor:null, anuladaAt:null,
       createdAt:new Date().toISOString()
     }
     DB.cobranzas.push(cobranza)
-    q.estado='PAGADA'
-    q.fechaPago=new Date().toISOString().split('T')[0]
-
-    // Check if all cuotas paid
+    q.estado    = 'PAGADA'
+    q.fechaPago = new Date().toISOString().split('T')[0]
     const cr = DB.creditos.find(x=>x.id===q.creditoId)
     if (cr && DB.cuotas.filter(x=>x.creditoId===cr.id&&x.estado!=='PAGADA'&&x.estado!=='CANCELADA').length===0) {
       cr.estado='CANCELADO'
+      supa('creditos','PATCH',{estado:'CANCELADO'},`?id=eq.${cr.id}`).catch(()=>{})
     }
-
-    // Save to Supabase
-    supaGuardar('cobranzas',{id:cobranza.id,cuota_id:q.id,usuario_id:sesion.id,
-      monto_cobrado:monto,metodo_pago:'EFECTIVO',anulada:false,datos:JSON.stringify({})}).catch(()=>{})
+    supaGuardar('cobranzas',{
+      id:cobranza.id, cuota_id:q.id, usuario_id:sesion.id,
+      monto_cobrado:monto, metodo_pago:metodo,
+      referencia_pago:ref, anulada:false,
+      datos:JSON.stringify({ esParcial:false })
+    }).catch(()=>{})
     supa('cuotas','PATCH',{estado:'PAGADA',fecha_pago:q.fechaPago},`?id=eq.${q.id}`).catch(()=>{})
   })
 
   guardarDB()
   updateBadges()
-  showToast(`✅ ${ids.length} cuotas cobradas — ${fmtMoney(total)}`)
-
-  // Refresh the panel
+  cerrarModalCobroMultiple()
+  showToast('✅ ' + ids.length + ' cuotas cobradas (' + metodo + ') — ' + fmtMoney(total))
   seleccionarClienteRapido(crClienteId)
 }
 
