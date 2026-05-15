@@ -2012,6 +2012,7 @@ const DB = {
     tasa_3_cuotas:15, tasa_6_cuotas:25, tasa_12_cuotas:45, tasa_18_cuotas:65, tasa_diario:45,
     dias_gracia_recargo:10, recargo_diario_pct:1, comision_refinanciacion:5, dias_alerta_vencimiento:2,
     frecuencia_default:'mensual',
+    proximoNumeroCredito: 1,
     dias_cobro:[1,2,3,4,5,6]
   },
   preferenciasUsuario: {},
@@ -2340,6 +2341,23 @@ const $$ = sel => document.querySelectorAll(sel)
 const fmt = n => Math.round(parseFloat(n||0)).toLocaleString('es-AR')
 const fmtMoney = n => '$' + fmt(n)
 const fmtDate = s => s ? new Date(s+'T12:00:00').toLocaleDateString('es-AR') : '—'
+
+
+// ── Número de crédito correlativo ─────────────────────────────────────────
+function fmtNumeroCredito(n) {
+  return '#' + String(n).padStart(4, '0')
+}
+
+function getNextNumeroCredito() {
+  // Find max existing numeroCredito across all creditos
+  const maxExisting = DB.creditos.reduce((max, cr) => {
+    const n = parseInt(cr.numeroCredito) || 0
+    return n > max ? n : max
+  }, 0)
+  // Also check DB.config
+  const configNext = parseInt(DB.config.proximoNumeroCredito) || 1
+  return Math.max(maxExisting + 1, configNext)
+}
 
 function uid() {
   // Generate RFC4122 UUID v4 — required by Supabase uuid columns
@@ -3483,7 +3501,9 @@ function verCredito(id) {
   const totalPag=DB.cobranzas.filter(c=>!c.anulada&&cuotas.find(q=>q.id===c.cuotaId)).reduce((s,c)=>s+parseFloat(c.montoCobrado),0)
   const totalPend=cuotas.filter(c=>c.estado!=='PAGADA'&&c.estado!=='CANCELADA').reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
 
-  $('vc-titulo').textContent = cr.descripcion||'Crédito personal'
+  $('vc-titulo').innerHTML = (cr.numeroCredito
+    ? '<span style="font-size:13px;color:var(--acc);font-weight:700;margin-right:6px">' + fmtNumeroCredito(cr.numeroCredito) + '</span>'
+    : '') + (cr.descripcion||'Crédito personal')
   $('vc-body').innerHTML = `
     <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
       <a href="#" onclick="closeModal('modal-ver-cliente');verCliente('${cli?.id}');return false" style="color:var(--acc3)">${cli?.nombreApellido}</a>
@@ -3995,8 +4015,11 @@ function crearCredito() {
     ? calcularDiasTotalesDiario(cuotasFinales, ncPrimeraCuotaHoy)
     : null
 
+  const _numCr = getNextNumeroCredito()
+  DB.config.proximoNumeroCredito = _numCr + 1
   DB.creditos.push({
     id:crId, clienteId:ncClienteId, usuarioId:sesion.id,
+    numeroCredito: _numCr,
     descripcion: ncDescripcion || 'Crédito personal',
     precioOriginal:monto, totalFinanciado:tot,
     cantidadCuotas:cuotasFinales, frecuenciaPago:ncFrecuencia,
@@ -4019,6 +4042,7 @@ function crearCredito() {
   const newCr = DB.creditos.find(x=>x.id===crId)
   if (newCr) supaGuardar('creditos', {
     id: newCr.id, cliente_id: newCr.clienteId, usuario_id: newCr.usuarioId,
+    numero_credito: newCr.numeroCredito,
     descripcion: newCr.descripcion, precio_original: newCr.precioOriginal,
     total_financiado: newCr.totalFinanciado, cantidad_cuotas: newCr.cantidadCuotas,
     frecuencia_pago: newCr.frecuenciaPago, tasa_interes: newCr.tasaInteres,
@@ -4146,7 +4170,7 @@ function renderAlertas() {
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px">
           <div>
             <p style="font-weight:700">${cli?.nombreApellido}</p>
-            <p style="font-size:12px;color:var(--muted)">${prodDesc} · Cuota ${c.numeroCuota}/${cr?.cantidadCuotas} · Vence ${fecha}</p>
+            <p style="font-size:12px;color:var(--muted)">${cr?.numeroCredito ? '<b style=\"color:var(--acc)\">' + fmtNumeroCredito(cr.numeroCredito) + '</b> · ' : ''}${prodDesc} · Cuota ${c.numeroCuota}/${cr?.cantidadCuotas} · Vence ${fecha}</p>
           </div>
           <b style="color:var(--warn);font-size:18px;white-space:nowrap">${fmtMoney(c.montoOriginal)}</b>
         </div>
@@ -4265,7 +4289,9 @@ function confirmarRefinanciacion() {
   })
   const _prodLookup=DB.productos.find(p=>p.id===DB.creditos.find(c=>c.id===refCreditosIds[0])?.productoId)
   const ncrId=uid()
-  DB.creditos.push({ id:ncrId, clienteId:refClienteId, usuarioId:sesion.id, productoId:prod?.id||'p1', precioOriginal:deudaTotal, totalFinanciado:Math.round(tot*100)/100, cantidadCuotas:refCuotas, tasaInteres:tasa, estado:'ACTIVO', refinanciacionId:refId, createdAt:new Date().toISOString() })
+  const _numRefi = getNextNumeroCredito()
+  DB.config.proximoNumeroCredito = _numRefi + 1
+  DB.creditos.push({ id:ncrId, clienteId:refClienteId, usuarioId:sesion.id, numeroCredito:_numRefi, productoId:prod?.id||'p1', precioOriginal:deudaTotal, totalFinanciado:Math.round(tot*100)/100, cantidadCuotas:refCuotas, tasaInteres:tasa, estado:'ACTIVO', refinanciacionId:refId, createdAt:new Date().toISOString() })
   for (let i=0;i<refCuotas;i++) {
     const f=new Date(); f.setMonth(f.getMonth()+i+1)
     DB.cuotas.push({ id:uid(), creditoId:ncrId, numeroCuota:i+1, montoOriginal:Math.round(mc*100)/100, montoRecargo:0, fechaVencimiento:f.toISOString().split('T')[0], estado:'PENDIENTE', fechaPago:null })
@@ -5854,7 +5880,11 @@ function descargarContratoPDF() {
     // Título
     doc.setFont('helvetica','bold')
     doc.setFontSize(13)
-    doc.text('CONTRATO DE CRÉDITO PERSONAL', W/2, y, {align:'center'}); y+=10
+    doc.text('CONTRATO DE CRÉDITO PERSONAL', W/2, y, {align:'center'}); y+=7
+    if (d.numeroCredito) {
+      doc.setFontSize(9); doc.setFont('helvetica','normal')
+      doc.text('Crédito ' + d.numeroCredito, W/2, y, {align:'center'}); y+=7
+    }
 
     // Intro
     doc.setFont('helvetica','normal')
@@ -6531,8 +6561,13 @@ async function enviarFirmaRemota() {
     // Offline fallback — guardar en localStorage
     console.warn('Supabase no disponible, guardando offline:', err.message)
     try {
+      // Only store the exact columns firmas table expects
       localStorage.setItem('firma_pendiente', JSON.stringify({
-        ...firmaRecord, savedAt: new Date().toISOString()
+        credito_id:    firmaRecord.credito_id,
+        firma_data:    firmaRecord.firma_data,
+        firma_fecha:   firmaRecord.firma_fecha,
+        firmado_desde: firmaRecord.firmado_desde,
+        dni_firmante:  firmaRecord.dni_firmante
       }))
     } catch(e) { console.warn('localStorage fallback también falló') }
   }
@@ -6559,6 +6594,13 @@ async function reintentarFirmaPendiente() {
 
   console.log('🔄 Reintentando firma pendiente...')
   try {
+    const firmaSend2 = {
+      credito_id:    pending.credito_id,
+      firma_data:    pending.firma_data,
+      firma_fecha:   pending.firma_fecha,
+      firmado_desde: pending.firmado_desde || 'whatsapp_link',
+      dni_firmante:  pending.dni_firmante || null
+    }
     const resp = await fetch(SUPA_URL + '/rest/v1/firmas', {
       method:  'POST',
       headers: {
@@ -6567,7 +6609,7 @@ async function reintentarFirmaPendiente() {
         'Content-Type':  'application/json',
         'Prefer':        'return=minimal'
       },
-      body: JSON.stringify(pending)
+      body: JSON.stringify(firmaSend2)
     })
     if (resp.ok) {
       localStorage.removeItem('firma_pendiente')
@@ -6808,7 +6850,15 @@ async function sincronizarFirmasRemota() {
     try {
       const pending = JSON.parse(localStorage.getItem('firma_pendiente') || 'null')
       if (pending && pending.credito_id) {
-        const ins = await supa('firmas','POST', pending, '')
+        // Strip to only table columns before sending
+        const firmaSend = {
+          credito_id:    pending.credito_id,
+          firma_data:    pending.firma_data,
+          firma_fecha:   pending.firma_fecha,
+          firmado_desde: pending.firmado_desde || 'whatsapp_link',
+          dni_firmante:  pending.dni_firmante || null
+        }
+        const ins = await supa('firmas','POST', firmaSend, '')
         if (ins !== null) {
           localStorage.removeItem('firma_pendiente')
           console.log('✅ Firma pendiente de localStorage enviada a Supabase')
@@ -7336,6 +7386,7 @@ function generarDatosCalendario(crId) {
 
   return {
     empresa:     emp.nombre     || 'CréditoFácil',
+    numeroCredito: cr.numeroCredito ? fmtNumeroCredito(cr.numeroCredito) : null,
     cuit:        emp.cuit       || '',
     direccion:   emp.direccion  || '',
     telefono:    emp.telefono   || '',
@@ -7772,6 +7823,7 @@ async function cargarDesdeSupa() {
       } catch(e) { d = {} }
       return {
         id:              cr.id,
+        numeroCredito:   cr.numero_credito || null,
         clienteId:       cr.cliente_id,
         usuarioId:       cr.usuario_id,
         descripcion:     cr.descripcion,
