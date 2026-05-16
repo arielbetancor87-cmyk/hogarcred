@@ -6214,6 +6214,8 @@ async function cargarContratoRemoto(token) {
             fr_show('fr-ya-firmado')
             $('fr-ya-firmado-fecha').textContent = 'Firmado el ' +
               (d.firmaFecha ? new Date(d.firmaFecha).toLocaleString('es-AR') : '—')
+            // Auto-mostrar panel de autogestión después de 1.5s
+            setTimeout(() => mostrarPanelAutogestion(frCreditoId), 1500)
             return
           }
         }
@@ -8874,6 +8876,12 @@ async function instalarApp() {
       <h3 style="color:#00e5a0;margin-bottom:8px;font-size:18px">¡Contrato ya firmado!</h3>
       <p id="fr-ya-firmado-fecha" style="color:#888;font-size:13px"></p>
       <p style="color:#555;font-size:12px;margin-top:12px">Podés cerrar esta ventana.</p>
+      <button onclick="mostrarPanelAutogestion(frCreditoId)"
+        style="margin-top:20px;background:#00e5a0;border:none;border-radius:12px;
+               padding:14px 28px;font-size:15px;font-weight:800;color:#000;
+               cursor:pointer;font-family:inherit">
+        📋 Ver mis cuotas
+      </button>
     </div>
 
     <!-- ── PASO 2: CONTRATO + FIRMA ── -->
