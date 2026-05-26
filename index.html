@@ -3257,6 +3257,7 @@ function guardarCliente() {
   if (savedCli) {
     supaGuardar('clientes', {
       id:           savedCli.id,
+      empresa_id:   empresaId,
       usuario_id:   savedCli.usuarioId,
       nombre_apellido: savedCli.nombreApellido,
       dni:          savedCli.dni,
@@ -3473,17 +3474,41 @@ function renderCreditos() {
       const cli=DB.clientes.find(c=>c.id===cr.clienteId)
       const pagadas=DB.cuotas.filter(c=>c.creditoId===cr.id&&c.estado==='PAGADA').length
       const freqLbl = FREQ_LABELS[cr.frecuenciaPago||'mensual']
-      return `<tr onclick="verCredito('${cr.id}')">
-        <td><b>${cli?.nombreApellido||'?'}</b></td>
-        <td style="color:var(--muted);font-size:12px">${cr.descripcion||'Crédito personal'}</td>
-        <td><b style="color:var(--acc)">${fmtMoney(cr.totalFinanciado)}</b></td>
-        <td style="color:var(--muted)">${pagadas}/${cr.cantidadCuotas} <small>(${freqLbl})</small></td>
-        <td>${chipEstado(cr.estado)}</td>
-        <td style="text-align:right">
-          ${cr.estado==='PENDIENTE_APROBACION' && sesion?.esAdmin
-            ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();aprobarCredito('${cr.id}')">✅</button> `
-            : ''}
-          ${cr.firmaData ? '<span title="Contrato firmado" style="font-size:13px;margin-right:4px">🔏</span>' : ''}
+      // Build card row
+      const progPct = cr.cantidadCuotas > 0 ? Math.round(pagadas/cr.cantidadCuotas*100) : 0
+      const initials = (cli?.nombreApellido||'?').split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()
+      const vencidas = DB.cuotas.filter(q=>q.creditoId===cr.id && q.estado==='VENCIDA').length
+      return `<tr onclick="verCredito('${cr.id}')" style="cursor:pointer">
+        <td>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#00e5a0,#0099ff);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#000;flex-shrink:0">${initials}</div>
+            <div>
+              <div style="font-weight:700;font-size:14px">${cli?.nombreApellido||'<span style=\"color:#666\">?</span>'}</div>
+              <div style="font-size:11px;color:#666">${cli?.dni||''}</div>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div style="font-weight:600;font-size:13px">${cr.descripcion||'Crédito personal'}</div>
+          ${cr.numeroCredito ? `<div style="font-size:11px;color:var(--acc);font-weight:700">${fmtNumeroCredito(cr.numeroCredito)}</div>` : ''}
+        </td>
+        <td>
+          <div style="font-weight:800;color:var(--acc);font-size:15px">${fmtMoney(cr.totalFinanciado)}</div>
+          <div style="font-size:11px;color:#666">${freqLbl}</div>
+        </td>
+        <td>
+          <div style="font-size:12px;margin-bottom:4px">${pagadas}/${cr.cantidadCuotas} cuotas</div>
+          <div style="height:4px;background:#1a1d2e;border-radius:2px;overflow:hidden;width:80px">
+            <div style="height:100%;width:${progPct}%;background:${progPct===100?'#00e5a0':vencidas>0?'#ff4060':'#0099ff'};border-radius:2px"></div>
+          </div>
+          ${vencidas>0 ? `<div style="font-size:10px;color:#ff4060;margin-top:2px">⚠️ ${vencidas} vencida${vencidas>1?'s':''}</div>` : ''}
+        </td>
+        <td>
+          ${chipEstado(cr.estado)}
+          <span style="font-size:12px;margin-left:4px">${cr.firmaData?'🔏':'✍️'}</span>
+        </td>
+        <td style="text-align:right;white-space:nowrap">
+          ${cr.estado==='PENDIENTE_APROBACION' && sesion?.esAdmin ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();aprobarCredito('${cr.id}')">✅</button> ` : ''}
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();verCredito('${cr.id}')">Ver →</button>
         </td>
       </tr>`
@@ -4041,7 +4066,7 @@ function crearCredito() {
   // Save credito to Supabase
   const newCr = DB.creditos.find(x=>x.id===crId)
   if (newCr) supaGuardar('creditos', {
-    id: newCr.id, cliente_id: newCr.clienteId, usuario_id: newCr.usuarioId,
+    id: newCr.id, empresa_id: empresaId, cliente_id: newCr.clienteId, usuario_id: newCr.usuarioId,
     numero_credito: newCr.numeroCredito,
     descripcion: newCr.descripcion, precio_original: newCr.precioOriginal,
     total_financiado: newCr.totalFinanciado, cantidad_cuotas: newCr.cantidadCuotas,
