@@ -4884,10 +4884,13 @@ function confirmarEliminarCredito() {
   // Eliminar crédito
   DB.creditos = DB.creditos.filter(c=>c.id!==creditoAEliminarId)
   registrarAuditoria('ELIMINACION_CREDITO','credito',creditoAEliminarId,{ cliente:cli?.nombreApellido, producto:prodDesc })
-  // Sync to Supabase
+  // Sync to Supabase — delete cobranzas by cuota_id (cobranzas has no credito_id column)
   const _crId = creditoAEliminarId
+  if (cuotasIds.length > 0) {
+    const idsCsv = cuotasIds.map(id => `"${id}"`).join(',')
+    supa('cobranzas','DELETE',null,`?cuota_id=in.(${idsCsv})`).catch(()=>{})
+  }
   supa('cuotas','DELETE',null,`?credito_id=eq.${_crId}`).catch(()=>{})
-  supa('cobranzas','DELETE',null,`?credito_id=eq.${_crId}`).catch(()=>{})
   supaEliminar('creditos', _crId).catch(()=>{})
   closeModal('modal-eliminar-credito')
   guardarDB()
@@ -7101,7 +7104,18 @@ function confirmarEliminarCliente() {
   logActividad('ELIMINACION_CLIENTE','Clientes','EXITOSA',{nombre:cli?.nombreApellido})
   closeModal('modal-eliminar-cliente')
   closeModal('modal-ver-cliente')
-  supaEliminar('clientes', clienteAEliminarId).catch(()=>{})
+  // Sync to Supabase — eliminar cobranzas, cuotas, créditos y cliente
+  const _cliId = clienteAEliminarId
+  if (cuotaIds.length > 0) {
+    const cuotasCsv = cuotaIds.map(id => `"${id}"`).join(',')
+    supa('cobranzas','DELETE',null,`?cuota_id=in.(${cuotasCsv})`).catch(()=>{})
+  }
+  if (crIds.length > 0) {
+    const crCsv = crIds.map(id => `"${id}"`).join(',')
+    supa('cuotas','DELETE',null,`?credito_id=in.(${crCsv})`).catch(()=>{})
+    supa('creditos','DELETE',null,`?cliente_id=eq.${_cliId}`).catch(()=>{})
+  }
+  supaEliminar('clientes', _cliId).catch(()=>{})
   guardarDB()
   showToast('🗑️ Cliente eliminado','🗑️')
   updateBadges()
