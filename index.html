@@ -2224,6 +2224,7 @@ function _dbSlim() {
 
 // ── Guardar en localStorage (best-effort, puede fallar en file://)
 function guardarDB() {
+  _deudaIndex = null  // invalidar índice de búsqueda (se reconstruye lazy)
   _cambiosSinGuardar++
   const data = JSON.stringify(_dbSlim())
 
@@ -8480,8 +8481,48 @@ function renderCobroRapido() {
   setTimeout(() => { const inp = $('cr-buscar'); if(inp) inp.focus() }, 200)
 }
 
+// ── Índice de deuda por cliente (pre-calculado, O(n) una sola vez) ──────────
+let _deudaIndex = null
+function construirIndiceDeuda() {
+  const idx = {}
+  // Mapa créditos activos por cliente
+  const crPorCliente = {}
+  for (const cr of DB.creditos) {
+    if (cr.estado === 'ACTIVO' || cr.estado === 'VENCIDA') {
+      (crPorCliente[cr.clienteId] = crPorCliente[cr.clienteId] || []).push(cr.id)
+    }
+  }
+  // Set de créditos activos para lookup rápido
+  const crActivos = {}
+  for (const cliId in crPorCliente) {
+    for (const crId of crPorCliente[cliId]) crActivos[crId] = cliId
+  }
+  // Recorrer cuotas UNA vez y acumular por cliente
+  for (const q of DB.cuotas) {
+    if (q.estado === 'PAGADA' || q.estado === 'CANCELADA') continue
+    const cliId = crActivos[q.creditoId]
+    if (!cliId) continue
+    if (!idx[cliId]) idx[cliId] = { deuda: 0, pend: 0, venc: 0 }
+    idx[cliId].deuda += parseFloat(q.montoOriginal||0) + parseFloat(q.montoRecargo||0)
+    idx[cliId].pend++
+    if (q.estado === 'VENCIDA') idx[cliId].venc++
+  }
+  _deudaIndex = idx
+  return idx
+}
+
+// ── Debounce timer para búsqueda ───────────────────────────────────────────
+let _busquedaTimer = null
 function buscarClienteRapido(q) {
-  const res = $('cr-resultados')
+  // Invalidar índice si cambió la data, reconstruir lazy
+  if (!_deudaIndex) construirIndiceDeuda()
+  // Debounce: espera 180ms tras dejar de tipear
+  clearTimeout(_busquedaTimer)
+  _busquedaTimer = setTimeout(() => _ejecutarBusquedaRapida(q), 180)
+}
+
+function _ejecutarBusquedaRapida(q) {
+  const res   = $('cr-resultados')
   const panel = $('cr-cliente-panel')
   const empty = $('cr-empty')
   q = (q||'').toLowerCase().trim()
@@ -8493,12 +8534,18 @@ function buscarClienteRapido(q) {
     return
   }
 
-  // Filter clients with pending/overdue cuotas
-  const matches = DB.clientes.filter(cli => {
-    const nombre = (cli.nombreApellido||'').toLowerCase()
-    const dni    = (cli.dni||'').toLowerCase()
-    return nombre.includes(q) || dni.includes(q)
-  }).slice(0, 8)
+  // Filtro rápido (corta en 8 resultados sin seguir iterando)
+  const matches = []
+  const esNumero = /^\d+$/.test(q)
+  for (const cli of DB.clientes) {
+    if (esNumero) {
+      // Búsqueda por DNI: match desde el inicio (más relevante)
+      if ((cli.dni||'').includes(q)) matches.push(cli)
+    } else {
+      if ((cli.nombreApellido||'').toLowerCase().includes(q)) matches.push(cli)
+    }
+    if (matches.length >= 8) break
+  }
 
   if (!res) return
 
@@ -8509,15 +8556,9 @@ function buscarClienteRapido(q) {
   }
 
   res.innerHTML = matches.map(cli => {
-    const cuotasPend = DB.cuotas.filter(q => {
-      if (q.estado === 'PAGADA' || q.estado === 'CANCELADA') return false
-      const cr = DB.creditos.find(x=>x.id===q.creditoId)
-      return cr?.clienteId === cli.id && (cr?.estado === 'ACTIVO' || cr?.estado === 'VENCIDA')
-    })
-    const deuda = cuotasPend.reduce((s,q)=>s+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0),0)
-    const vencidas = cuotasPend.filter(q=>q.estado==='VENCIDA').length
-    const ini = cli.nombreApellido.split(' ').map(n=>n[0]).slice(0,2).join('')
-
+    // Lookup O(1) en el índice pre-calculado
+    const info = _deudaIndex[cli.id] || { deuda: 0, pend: 0, venc: 0 }
+    const ini  = (cli.nombreApellido||'?').split(' ').map(n=>n[0]).slice(0,2).join('')
     return `<div onclick="seleccionarClienteRapido('${cli.id}')" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--bord);transition:background .15s" onmouseenter="this.style.background='var(--s2)'" onmouseleave="this.style.background='none'">
       <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--acc3),var(--acc));display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#000;flex-shrink:0">${ini}</div>
       <div style="flex:1;min-width:0">
@@ -8525,9 +8566,9 @@ function buscarClienteRapido(q) {
         <p style="font-size:11px;color:var(--muted)">DNI ${cli.dni||'—'} · 📞 ${cli.celular||'—'}</p>
       </div>
       <div style="text-align:right;flex-shrink:0">
-        ${cuotasPend.length > 0
-          ? `<p style="font-weight:800;font-size:14px;color:${vencidas>0?'var(--danger)':'var(--acc)'}">${fmtMoney(deuda)}</p>
-             <p style="font-size:10px;color:var(--muted)">${cuotasPend.length} cuota${cuotasPend.length>1?'s':''} pend.${vencidas>0?' · '+vencidas+' venc.':''}</p>`
+        ${info.pend > 0
+          ? `<p style="font-weight:800;font-size:14px;color:${info.venc>0?'var(--danger)':'var(--acc)'}">${fmtMoney(info.deuda)}</p>
+             <p style="font-size:10px;color:var(--muted)">${info.pend} cuota${info.pend>1?'s':''} pend.${info.venc>0?' · '+info.venc+' venc.':''}</p>`
           : '<p style="font-size:11px;color:var(--acc)">✅ Al día</p>'
         }
       </div>
