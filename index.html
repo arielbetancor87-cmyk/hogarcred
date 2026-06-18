@@ -1011,8 +1011,8 @@ select.form-input option{background:var(--s2)}
       <div class="card" style="margin-top:14px">
         <h3 style="font-size:14px;font-weight:700;margin-bottom:6px">💾 Exportar / Importar datos</h3>
         <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
-          Como la app corre localmente (sin servidor), los datos se guardan en el navegador.<br>
-          <b style="color:var(--warn)">Para no perder datos al cambiar de computadora o navegador, exportá un archivo JSON.</b>
+          ✅ Tus datos se guardan automáticamente en la nube (Supabase) en tiempo real. Podés entrar desde cualquier computadora o celular con tu usuario y contraseña, los datos van a estar ahí.<br>
+          El archivo JSON de abajo es un <b>backup adicional opcional</b>, no es necesario para no perder información.
         </p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
           <div style="background:var(--s2);border-radius:var(--r-sm);padding:14px;border:1px solid var(--bord)">
@@ -1027,13 +1027,14 @@ select.form-input option{background:var(--s2)}
           </div>
         </div>
         <div style="background:rgba(255,176,32,.06);border:1px solid rgba(255,176,32,.25);border-radius:var(--r-sm);padding:12px;font-size:12px;color:var(--warn);margin-bottom:12px">
-          💡 <b>Flujo recomendado:</b> Al terminar de trabajar → Exportar datos → Guardar el JSON en tu computadora. La próxima vez → Abrir la app → Importar datos.
+          💡 <b>Recomendación:</b> tus datos ya se guardan solos en la nube. Usá "Crear backup" cada tanto como respaldo extra, no es obligatorio para no perder nada.
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" onclick="testConexionSupa()">🔌 Probar conexión</button>
           <button class="btn btn-ghost btn-sm" onclick="crearBackupManual();goTo('backups')">💾 Crear backup</button>
-          <button class="btn btn-danger btn-sm" onclick="resetearADemo()">🔄 Reiniciar demo</button>
+          <button class="btn btn-danger btn-sm" onclick="resetearADemo()">🔄 Restablecer datos de prueba</button>
         </div>
+        <p style="font-size:11px;color:var(--muted);margin-top:4px">⚠️ "Restablecer datos de prueba" borra clientes, créditos y pagos REALES y los reemplaza por datos de ejemplo. Usalo solo en pruebas, no en producción.</p>
         <p style="font-size:11px;color:var(--muted);margin-top:10px" id="cfg-ultima-guardado"></p>
       </div>
     </div>
@@ -2190,7 +2191,7 @@ async function supa(table, method='GET', body=null, params='', upsert=false) {
     method,
     headers: {
       'apikey':        SUPA_KEY,
-      'Authorization': 'Bearer ' + SUPA_KEY,
+      'Authorization': 'Bearer ' + (authToken || SUPA_KEY),
       'Content-Type':  'application/json',
       'Prefer':        prefer
     },
@@ -2208,6 +2209,8 @@ async function supa(table, method='GET', body=null, params='', upsert=false) {
 
 // Empresa activa (se setea al login)
 let empresaId = null
+// Token seguro emitido por /api/login (reemplaza el uso del anon key tras autenticar)
+let authToken = null
 
 const DB_STORAGE_KEY = 'creditofacil_db_v2'
 let _cambiosSinGuardar = 0
@@ -2593,28 +2596,32 @@ function doLogin() {
   if(btn){btn.disabled=true;$('login-btn-text').textContent='Verificando...'}
   hideLoginError()
 
-  // Autenticar contra Supabase
-  supa('usuarios', 'GET', null,
-    `?username=eq.${encodeURIComponent(u)}&password=eq.${encodeURIComponent(p)}&activo=eq.true&select=*`
-  ).then(async rows => {
-    if (!rows || rows.length === 0) {
+  // Autenticar a través de la función segura del servidor (no contra Supabase directo)
+  fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: u, password: p })
+  }).then(async r => {
+    const data = await r.json().catch(() => ({}))
+
+    if (!r.ok) {
       if(btn){btn.disabled=false;$('login-btn-text').textContent='Ingresar →'}
-      if(errEl){$('login-error-msg').textContent='❌ Usuario o contraseña incorrectos.';errEl.style.display='flex';errEl.style.alignItems='center';}
+      if(errEl){$('login-error-msg').textContent='❌ '+(data.error||'Usuario o contraseña incorrectos.');errEl.style.display='flex';errEl.style.alignItems='center';}
       return
     }
 
-    const user = rows[0]
-    empresaId = user.empresa_id
+    authToken = data.token
+    empresaId = data.user.empresaId
 
     // Build sesion object compatible with existing app
     sesion = {
-      id:             user.id,
-      username:       user.username,
-      nombreCompleto: user.nombre_completo,
-      esAdmin:        user.es_admin === true || user.es_admin === 'true',
-      activo:         user.activo,
-      permisos:       typeof user.permisos === 'string' ? JSON.parse(user.permisos) : (user.permisos||[]),
-      empresaId:      user.empresa_id
+      id:             data.user.id,
+      username:       data.user.username,
+      nombreCompleto: data.user.nombreCompleto,
+      esAdmin:        data.user.esAdmin,
+      activo:         data.user.activo,
+      permisos:       data.user.permisos,
+      empresaId:      data.user.empresaId
     }
 
     // Load all data from Supabase into DB
@@ -2654,6 +2661,7 @@ function doLogin() {
 function doLogout() {
   logActividad('LOGOUT','Autenticación','EXITOSA')
   sesion = null
+  authToken = null
   $('app').style.display = 'none'
   $('mobile-nav').style.display = 'none'
   $('login-screen').style.display = 'flex'
