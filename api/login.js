@@ -1,7 +1,6 @@
 // /api/login.js — Login seguro HogarCred
 const crypto = require('crypto');
 
-// Acepta tanto el nombre nuevo como el que ya existía en Vercel (SUPA_SERVICE_KEY)
 const SUPABASE_URL = process.env.SUPABASE_URL
   || process.env.SUPA_URL
   || 'https://ljsbgdqqjiwjtjlbdrzn.supabase.co';
@@ -24,19 +23,14 @@ function signJWT(payload) {
 }
 
 module.exports = async (req, res) => {
-  // CORS para llamadas desde el mismo dominio
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (req.method !== 'POST') { res.status(405).json({ error: 'Método no permitido' }); return; }
 
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Método no permitido' }); return;
-  }
-
-  // Diagnóstico de variables (sin exponer los valores)
   if (!SERVICE_KEY) {
-    res.status(500).json({ error: 'Falta SERVICE_KEY. Variables disponibles: ' + Object.keys(process.env).filter(k => k.startsWith('SUPA') || k.startsWith('SUPABASE')).join(', ') });
+    res.status(500).json({ error: 'Falta SERVICE_KEY. Variables: ' + Object.keys(process.env).filter(k => k.includes('SUPA')).join(', ') });
     return;
   }
   if (!JWT_SECRET) {
@@ -72,21 +66,30 @@ module.exports = async (req, res) => {
     }
 
     const now = Math.floor(Date.now() / 1000);
+
+    // JWT con el formato exacto que Supabase/PostgREST espera
     const token = signJWT({
-      sub: user.id, role: 'authenticated',
-      empresa_id: user.empresa_id, username: user.username,
-      iat: now, exp: now + 60 * 60 * 12
+      iss:        'supabase',
+      ref:        'ljsbgdqqjiwjtjlbdrzn',
+      aud:        'authenticated',
+      sub:        user.id,
+      role:       'authenticated',
+      empresa_id: user.empresa_id,
+      username:   user.username,
+      iat:        now,
+      exp:        now + 60 * 60 * 12  // 12 horas
     });
 
     res.status(200).json({
       token,
       user: {
-        id: user.id, username: user.username,
+        id:             user.id,
+        username:       user.username,
         nombreCompleto: user.nombre_completo,
-        esAdmin: user.es_admin === true || user.es_admin === 'true',
-        activo: user.activo,
-        permisos: typeof user.permisos === 'string' ? JSON.parse(user.permisos || '[]') : (user.permisos || []),
-        empresaId: user.empresa_id
+        esAdmin:        user.es_admin === true || user.es_admin === 'true',
+        activo:         user.activo,
+        permisos:       typeof user.permisos === 'string' ? JSON.parse(user.permisos || '[]') : (user.permisos || []),
+        empresaId:      user.empresa_id
       }
     });
   } catch (err) {
