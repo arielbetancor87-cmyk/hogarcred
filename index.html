@@ -1032,9 +1032,10 @@ select.form-input option{background:var(--s2)}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" onclick="testConexionSupa()">🔌 Probar conexión</button>
           <button class="btn btn-ghost btn-sm" onclick="crearBackupManual();goTo('backups')">💾 Crear backup</button>
+          <button class="btn btn-primary btn-sm" onclick="sincronizarTodoASupabase()">☁️ Sincronizar todo a la nube</button>
           <button class="btn btn-danger btn-sm" onclick="resetearADemo()">🔄 Restablecer datos de prueba</button>
         </div>
-        <p style="font-size:11px;color:var(--muted);margin-top:4px">⚠️ "Restablecer datos de prueba" borra clientes, créditos y pagos REALES y los reemplaza por datos de ejemplo. Usalo solo en pruebas, no en producción.</p>
+        <p style="font-size:11px;color:var(--muted);margin-top:4px">☁️ "Sincronizar todo a la nube" sube todos los datos de <b>esta computadora</b> a Supabase — usalo si los datos difieren entre PCs.<br>⚠️ "Restablecer datos de prueba" borra clientes, créditos y pagos REALES y los reemplaza por datos de ejemplo. Usalo solo en pruebas, no en producción.</p>
         <p style="font-size:11px;color:var(--muted);margin-top:10px" id="cfg-ultima-guardado"></p>
       </div>
     </div>
@@ -5301,6 +5302,8 @@ function confirmarModFecha() {
   c.fechaVencimiento = nueva
   registrarAuditoria('MODIFICACION_FECHA','cuota',c.id,{ fechaAnterior:anterior, fechaNueva:nueva, motivo })
   logActividad('MODIFICACION_FECHA_PAGO','Créditos','EXITOSA',{ cuotaId:c.id, anterior, nueva, motivo })
+  // Sync to Supabase
+  supa('cuotas','PATCH',{ fecha_vencimiento: nueva }, `?id=eq.${c.id}`).catch(e => console.warn('confirmarModFecha supa:', e.message))
   closeModal('modal-mod-fecha')
   guardarDB()
   showToast('✅ Fecha modificada correctamente')
@@ -8249,6 +8252,101 @@ async function supaGuardar(tabla, datos, id=null) {
       console.warn(`supaGuardar(${tabla}):`, err.message)
       guardarDB()
     }
+  }
+}
+
+// ── Sincronizar TODO el DB local a Supabase (migración/reparación)
+async function sincronizarTodoASupabase() {
+  if (!empresaId) { showToast('⚠️ No hay sesión activa','⚠️'); return }
+  if (!confirm('Esta acción sube TODOS los datos locales (clientes, créditos, cuotas, cobranzas) a Supabase.\n\nSi hay diferencias entre la PC y la nube, prevalecerán los datos de ESTA computadora.\n\n¿Continuar?')) return
+
+  showLoadingOverlay('Sincronizando con la nube...')
+  let ok = 0, err = 0
+  const eid = empresaId
+
+  try {
+    // 1. Clientes
+    for (const cl of DB.clientes) {
+      try {
+        await supa('clientes','POST',{
+          id: cl.id, empresa_id: eid, usuario_id: cl.usuarioId,
+          nombre_apellido: cl.nombreApellido, dni: cl.dni,
+          celular: cl.celular, direccion: cl.direccion,
+          datos: JSON.stringify({
+            fechaNacimiento:cl.fechaNacimiento, email:cl.email,
+            ref1Nombre:cl.ref1Nombre, ref1Celular:cl.ref1Celular,
+            ref1Relacion:cl.ref1Relacion, ref1Email:cl.ref1Email,
+            ref2Nombre:cl.ref2Nombre, ref2Celular:cl.ref2Celular,
+            ref2Relacion:cl.ref2Relacion, ref2Email:cl.ref2Email,
+            empRazon:cl.empRazon, empCuit:cl.empCuit, empTel:cl.empTel,
+            empDir:cl.empDir, empEmail:cl.empEmail, empCargo:cl.empCargo,
+            empIngreso:cl.empIngreso, empSueldo:cl.empSueldo, empTipo:cl.empTipo,
+            enMora:cl.enMora
+          })
+        }, '', true); ok++
+      } catch(e) { err++; console.warn('sync clientes:', e.message) }
+    }
+
+    // 2. Créditos
+    for (const cr of DB.creditos) {
+      try {
+        await supa('creditos','POST',{
+          id: cr.id, empresa_id: eid,
+          numero_credito: cr.numeroCredito,
+          cliente_id: cr.clienteId, usuario_id: cr.usuarioId,
+          descripcion: cr.descripcion, precio_original: cr.precioOriginal,
+          total_financiado: cr.totalFinanciado, cantidad_cuotas: cr.cantidadCuotas,
+          frecuencia_pago: cr.frecuenciaPago, tasa_interes: cr.tasaInteres,
+          estado: cr.estado, created_at: cr.createdAt,
+          datos: JSON.stringify({
+            diasTotales:cr.diasTotales, diasCobro:cr.diasCobro,
+            primeraCuotaHoy:cr.primeraCuotaHoy,
+            fechaPrimeraCuota:cr.fechaPrimeraCuota,
+            refinanciacionId:cr.refinanciacionId,
+            tipoCuota:cr.tipoCuota,
+            metodoPagoAdelantada:cr.metodoPagoAdelantada,
+            firmaToken:cr.firmaToken, firmaData:cr.firmaData, firmaFecha:cr.firmaFecha
+          })
+        }, '', true); ok++
+      } catch(e) { err++; console.warn('sync creditos:', e.message) }
+    }
+
+    // 3. Cuotas
+    for (const q of DB.cuotas) {
+      try {
+        await supa('cuotas','POST',{
+          id: q.id, empresa_id: eid,
+          credito_id: q.creditoId, numero_cuota: q.numeroCuota,
+          monto_original: q.montoOriginal, monto_recargo: q.montoRecargo||0,
+          fecha_vencimiento: q.fechaVencimiento,
+          estado: q.estado, fecha_pago: q.fechaPago||null
+        }, '', true); ok++
+      } catch(e) { err++; console.warn('sync cuotas:', e.message) }
+    }
+
+    // 4. Cobranzas
+    for (const cb of DB.cobranzas) {
+      try {
+        await supa('cobranzas','POST',{
+          id: cb.id, empresa_id: eid,
+          cuota_id: cb.cuotaId, usuario_id: cb.usuarioId,
+          monto_cobrado: cb.montoCobrado, metodo_pago: cb.metodoPago,
+          referencia_pago: cb.referenciaPago||null,
+          anulada: cb.anulada||false,
+          anulada_por: cb.anuladaPor||null,
+          anulada_at: cb.anuladaAt||null,
+          motivo_anulacion: cb.motivoAnulacion||null,
+          created_at: cb.createdAt
+        }, '', true); ok++
+      } catch(e) { err++; console.warn('sync cobranzas:', e.message) }
+    }
+
+    hideLoadingOverlay()
+    showToast(`✅ Sincronización completa: ${ok} registros subidos${err>0?' · '+err+' errores':''}`, '☁️')
+    console.log(`Sincronización: ${ok} OK, ${err} errores`)
+  } catch(globalErr) {
+    hideLoadingOverlay()
+    showToast('❌ Error durante la sincronización: ' + globalErr.message, '❌')
   }
 }
 
