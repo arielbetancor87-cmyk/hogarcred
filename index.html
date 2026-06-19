@@ -2191,7 +2191,7 @@ async function supa(table, method='GET', body=null, params='', upsert=false) {
     method,
     headers: {
       'apikey':        SUPA_KEY,
-      'Authorization': 'Bearer ' + (authToken || SUPA_KEY),
+      'Authorization': 'Bearer ' + SUPA_KEY,
       'Content-Type':  'application/json',
       'Prefer':        prefer
     },
