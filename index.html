@@ -7099,6 +7099,31 @@ function verificarRetornoPagoMP() {
     }
     try { localStorage.removeItem('mp_cuota_pendiente') } catch(e) {}
     showToast('✅ ¡Pago aprobado por Mercado Pago!', '💙')
+
+    // Si el cliente está en el panel de autogestión, recargar cuotas desde Supabase
+    // para que el estado se refleje correctamente sin depender del localStorage
+    if (typeof frCreditoId !== 'undefined' && frCreditoId) {
+      setTimeout(async () => {
+        try {
+          const qResp = await fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + frCreditoId +
+            '&select=*&order=numero_cuota.asc', {
+            headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
+          })
+          if (qResp.ok) {
+            const cuotasActualizadas = await qResp.json()
+            // Actualizar las cuotas de este crédito en DB local
+            cuotasActualizadas.forEach(q => {
+              const local = DB.cuotas?.find(x => x.id === q.id)
+              if (local) { local.estado = q.estado; local.fechaPago = q.fecha_pago }
+            })
+            guardarDB()
+          }
+        } catch(e) { console.warn('recarga cuotas post-MP:', e.message) }
+        // Re-renderizar el panel del cliente con datos frescos
+        mostrarPanelAutogestion(frCreditoId)
+      }, 1500)
+    }
+
     // Auto-descargar comprobante de pago
     setTimeout(() => generarComprobantePagoPDF(cuotaId, { metodo: 'MP_ONLINE' }), 800)
     // Mostrar botón de comprobante en el panel si está visible
@@ -8208,6 +8233,9 @@ async function cargarDesdeSupa() {
     detectarYActualizarMora()
     // Update header with company logo/name
     actualizarLogoEnHeader()
+
+    // Auto-sincronizar firmas pendientes (créditos sin firmaData pero con firma en tabla firmas)
+    sincronizarFirmasPendientesAuto().catch(() => {})
   } catch(err) {
     console.error('Error cargando desde Supabase:', err)
     // Fallback to localStorage cache
@@ -8252,6 +8280,66 @@ async function supaGuardar(tabla, datos, id=null) {
       console.warn(`supaGuardar(${tabla}):`, err.message)
       guardarDB()
     }
+  }
+}
+
+// ── Sincronizar firmas automáticamente al cargar (silencioso, sin toasts molestos)
+async function sincronizarFirmasPendientesAuto() {
+  if (!empresaId) return
+  // Buscar créditos que no tienen firmaData pero podrían tener firma en la tabla firmas
+  const creditosSinFirma = DB.creditos.filter(cr =>
+    cr.estado !== 'CANCELADO' && !cr.firmaData
+  )
+  if (!creditosSinFirma.length) return
+
+  try {
+    // Traer todas las firmas de esta empresa de una sola consulta
+    const ids = creditosSinFirma.map(cr => `"${cr.id}"`).join(',')
+    const firmas = await supa('firmas','GET',null,
+      `?credito_id=in.(${ids})&select=credito_id,firma_data,firma_fecha&order=created_at.desc`
+    )
+    if (!Array.isArray(firmas) || !firmas.length) return
+
+    // Agrupar por credito_id (tomar la más reciente)
+    const firmaMap = {}
+    firmas.forEach(f => {
+      if (!firmaMap[f.credito_id]) firmaMap[f.credito_id] = f
+    })
+
+    let actualizados = 0
+    const patchPromises = []
+
+    Object.entries(firmaMap).forEach(([creditoId, firma]) => {
+      const cr = DB.creditos.find(x => x.id === creditoId)
+      if (!cr || cr.firmaData) return
+      cr.firmaData  = firma.firma_data
+      cr.firmaFecha = firma.firma_fecha
+      actualizados++
+      // Persistir en Supabase
+      patchPromises.push(
+        supa('creditos','PATCH',{
+          datos: JSON.stringify({
+            diasTotales: cr.diasTotales, diasCobro: cr.diasCobro,
+            primeraCuotaHoy: cr.primeraCuotaHoy,
+            fechaPrimeraCuota: cr.fechaPrimeraCuota,
+            refinanciacionId: cr.refinanciacionId,
+            tipoCuota: cr.tipoCuota,
+            firmaToken: cr.firmaToken,
+            firmaData:  firma.firma_data,
+            firmaFecha: firma.firma_fecha
+          })
+        }, `?id=eq.${creditoId}`).catch(() => {})
+      )
+    })
+
+    if (actualizados > 0) {
+      await Promise.all(patchPromises)
+      guardarDB()
+      console.log(`✅ ${actualizados} firma(s) sincronizada(s) automáticamente`)
+      updateBadges()
+    }
+  } catch(e) {
+    console.warn('sincronizarFirmasPendientesAuto:', e.message)
   }
 }
 
