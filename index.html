@@ -3379,6 +3379,13 @@ function verCliente(id) {
     <div id="vc-p-datos">
       ${[['DNI',c.dni],['Celular',c.celular],['Dirección',c.direccion],['Nacimiento',fmtDate(c.fechaNacimiento)]]
         .map(([k,v])=>`<div class="info-row"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`).join('')}
+      ${(() => {
+        const vendedor = DB.usuarios.find(u => u.id === c.usuarioId)
+        return `<div class="info-row"><span class="info-key">Vendedor asignado</span><span class="info-val" style="display:flex;align-items:center;gap:8px">
+          <span style="color:var(--acc3);font-weight:600">${vendedor?.nombreCompleto || '—'}</span>
+          ${sesion?.esAdmin ? `<button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px" onclick="abrirReasignarCliente('${id}')">🔄 Reasignar</button>` : ''}
+        </span></div>`
+      })()}
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
         <a href="${mapsUrl}" target="_blank" class="btn btn-ghost btn-sm">🗺️ Maps</a>
         <a href="${waUrl}" target="_blank" class="btn btn-wa btn-sm">📲 WhatsApp</a>
@@ -7372,6 +7379,84 @@ function enviarFirmaWhatsAppDirecto(crId) {
 // ELIMINAR CLIENTE
 // ════════════════════════════════════════════════════
 let clienteAEliminarId = null
+
+// ── Reasignar cliente y sus créditos a otro usuario ──────────────────────────
+let reasignarClienteId = null
+
+function abrirReasignarCliente(clienteId) {
+  reasignarClienteId = clienteId
+  const c = DB.clientes.find(x => x.id === clienteId)
+  if (!c) return
+
+  // Crear modal inline
+  const existing = document.getElementById('modal-reasignar-cliente')
+  if (existing) existing.remove()
+
+  const opts = DB.usuarios.filter(u => u.activo)
+    .map(u => `<option value="${u.id}" ${u.id === c.usuarioId ? 'selected' : ''}>${u.nombreCompleto}</option>`)
+    .join('')
+
+  const div = document.createElement('div')
+  div.className = 'modal-overlay'
+  div.id = 'modal-reasignar-cliente'
+  div.style.cssText = 'display:flex;z-index:2000'
+  div.innerHTML = `
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3 class="modal-title">🔄 Reasignar cliente</h3>
+        <button class="modal-close" onclick="document.getElementById('modal-reasignar-cliente').remove()">✕</button>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+        Cliente: <b style="color:var(--text)">${c.nombreApellido}</b><br>
+        También se reasignarán todos sus créditos al usuario seleccionado.
+      </p>
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Asignar a</label>
+      <select id="sel-reasignar-usuario" style="width:100%;padding:10px;background:var(--s2);color:var(--text);border:1px solid var(--bord);border-radius:var(--r-sm);font-size:14px;margin-bottom:16px">
+        ${opts}
+      </select>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-reasignar-cliente').remove()">Cancelar</button>
+        <button class="btn btn-primary" style="flex:2;justify-content:center" onclick="confirmarReasignarCliente()">✅ Confirmar reasignación</button>
+      </div>
+    </div>`
+  document.body.appendChild(div)
+}
+
+function confirmarReasignarCliente() {
+  const nuevoUsuarioId = document.getElementById('sel-reasignar-usuario')?.value
+  if (!nuevoUsuarioId || !reasignarClienteId) return
+
+  const c = DB.clientes.find(x => x.id === reasignarClienteId)
+  if (!c) return
+  const nuevoUsuario = DB.usuarios.find(u => u.id === nuevoUsuarioId)
+  const anterior = c.usuarioId
+
+  // Actualizar cliente
+  c.usuarioId = nuevoUsuarioId
+
+  // Actualizar todos sus créditos
+  const creditos = DB.creditos.filter(cr => cr.clienteId === reasignarClienteId)
+  creditos.forEach(cr => { cr.usuarioId = nuevoUsuarioId })
+
+  // Guardar en Supabase
+  supa('clientes','PATCH',{ usuario_id: nuevoUsuarioId }, `?id=eq.${reasignarClienteId}`).catch(() => {})
+  creditos.forEach(cr => {
+    supa('creditos','PATCH',{ usuario_id: nuevoUsuarioId }, `?id=eq.${cr.id}`).catch(() => {})
+  })
+
+  guardarDB()
+  registrarAuditoria('REASIGNACION_CLIENTE','cliente', reasignarClienteId, {
+    anterior, nuevo: nuevoUsuarioId, creditos: creditos.length
+  })
+
+  document.getElementById('modal-reasignar-cliente')?.remove()
+  showToast(`✅ Cliente y ${creditos.length} crédito(s) reasignados a ${nuevoUsuario?.nombreCompleto}`)
+  renderClientes()
+  // Refrescar modal del cliente si sigue abierto
+  if (document.getElementById('modal-ver-cliente')?.style.display !== 'none') {
+    verCliente(reasignarClienteId)
+  }
+}
 
 function pedirEliminarCliente(id) {
   const cli = DB.clientes.find(c=>c.id===id)
