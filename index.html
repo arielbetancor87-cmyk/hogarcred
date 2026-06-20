@@ -2905,6 +2905,22 @@ function selPayMethod(el, metodo) {
 function confirmarCobro() {
   const cuota = DB.cuotas.find(c=>c.id===cobroActualCuotaId)
   if (!cuota) return
+
+  // ── Guardia anti-doble cobro ──────────────────────────────────────────────
+  if (cuota.estado === 'PAGADA') {
+    showToast('⚠️ Esta cuota ya fue cobrada anteriormente.', '⚠️')
+    closeModal('modal-cobro')
+    return
+  }
+  // Verificar si ya existe una cobranza no anulada para esta cuota
+  const cobranzaExistente = DB.cobranzas.find(cb => cb.cuotaId === cuota.id && !cb.anulada)
+  if (cobranzaExistente) {
+    showToast('⚠️ Ya existe un cobro registrado para esta cuota.', '⚠️')
+    closeModal('modal-cobro')
+    return
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Recalculate recargo
   if (cuota.estado === 'VENCIDA') cuota.montoRecargo = calcularRecargoCuota(cuota)
   const sinRecargo  = $('cobro-sin-recargo')?.checked || false
@@ -8983,6 +8999,9 @@ function confirmarCobroMultiple() {
   ids.forEach(cuotaId => {
     const q = DB.cuotas.find(x=>x.id===cuotaId)
     if (!q) return
+    // Guardia anti-doble cobro
+    if (q.estado === 'PAGADA') return
+    if (DB.cobranzas.find(cb => cb.cuotaId === q.id && !cb.anulada)) return
     if (q.estado==='VENCIDA') q.montoRecargo = calcularRecargoCuota(q)
     const monto = parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0)
     const cobranza = {
