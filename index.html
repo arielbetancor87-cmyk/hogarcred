@@ -2648,8 +2648,8 @@ function doLogin() {
     actualizarLogoEnHeader()
     updateBadges()
     goTo('dashboard')
-    // Sync remote signatures from firmas table → creditos
-    sincronizarFirmasRemota().catch(e => console.warn('Sync firmas:', e.message))
+    // Las firmas se sincronizan automáticamente dentro de cargarDesdeSupa()
+    // mediante sincronizarFirmasPendientesAuto() (filtra por créditos de esta empresa)
 
   }).catch(err => {
     console.error('Login error:', err)
@@ -2871,12 +2871,17 @@ function abrirCobro(cuotaId) {
   const prodDesc = cr?.descripcion || 'Crédito personal'
   // Recalculate recargo in real time when opening cobro modal
   if (cuota.estado === 'VENCIDA') cuota.montoRecargo = calcularRecargoCuota(cuota)
-  const monto = parseFloat(cuota.montoOriginal)+parseFloat(cuota.montoRecargo||0)
+  const montoTot = parseFloat(cuota.montoOriginal)+parseFloat(cuota.montoRecargo||0)
+  // Descontar pagos parciales previos no anulados
+  const yaPagado = DB.cobranzas
+    .filter(cb => cb.cuotaId === cuotaId && !cb.anulada)
+    .reduce((s, cb) => s + parseFloat(cb.montoCobrado || 0), 0)
+  const monto = Math.round((montoTot - yaPagado) * 100) / 100
 
   $('cobro-info').innerHTML = `
     <p style="color:var(--muted);font-size:12px;margin-bottom:6px">${cli?.nombreApellido} — ${prodDesc}</p>
     <p style="font-family:'Syne',sans-serif;font-size:26px;font-weight:800;color:var(--text)">${fmtMoney(monto)}</p>
-    <p style="font-size:12px;color:var(--muted);margin-top:4px">Cuota ${cuota.numeroCuota}/${cr?.cantidadCuotas}${parseFloat(cuota.montoRecargo)>0?` · <span style="color:var(--danger)">Incluye recargo ${fmtMoney(cuota.montoRecargo)}</span>`:''}</p>`
+    <p style="font-size:12px;color:var(--muted);margin-top:4px">Cuota ${cuota.numeroCuota}/${cr?.cantidadCuotas}${parseFloat(cuota.montoRecargo)>0?` · <span style="color:var(--danger)">Incluye recargo ${fmtMoney(cuota.montoRecargo)}</span>`:''}${yaPagado>0?` · <span style="color:var(--warn)">Ya pagado: ${fmtMoney(yaPagado)} (saldo ${fmtMoney(monto)})</span>`:''}</p>`
 
   $$('#modal-cobro .pay-card').forEach(p=>p.classList.remove('sel','sel-mp'))
   $$('#modal-cobro .pay-card')[0].classList.add('sel')
@@ -2912,13 +2917,6 @@ function confirmarCobro() {
     closeModal('modal-cobro')
     return
   }
-  // Verificar si ya existe una cobranza no anulada para esta cuota
-  const cobranzaExistente = DB.cobranzas.find(cb => cb.cuotaId === cuota.id && !cb.anulada)
-  if (cobranzaExistente) {
-    showToast('⚠️ Ya existe un cobro registrado para esta cuota.', '⚠️')
-    closeModal('modal-cobro')
-    return
-  }
   // ─────────────────────────────────────────────────────────────────────────
 
   // Recalculate recargo
@@ -2927,15 +2925,27 @@ function confirmarCobro() {
   const recargoReal = sinRecargo ? 0 : parseFloat(cuota.montoRecargo||0)
   const montoTotal  = parseFloat(cuota.montoOriginal) + recargoReal
 
+  // Cuánto ya se cobró antes en esta cuota (pagos parciales previos no anulados)
+  const yaCobrado = DB.cobranzas
+    .filter(cb => cb.cuotaId === cuota.id && !cb.anulada)
+    .reduce((s, cb) => s + parseFloat(cb.montoCobrado || 0), 0)
+  const saldoCuota = Math.round((montoTotal - yaCobrado) * 100) / 100
+
+  if (saldoCuota <= 0) {
+    showToast('⚠️ Esta cuota ya está totalmente saldada.', '⚠️')
+    closeModal('modal-cobro')
+    return
+  }
+
   // Determine amount based on cobro tipo
-  let monto = montoTotal
+  let monto = saldoCuota
   let esParcial = false
   if (cobroTipo === 'parcial') {
     const montoParcial = parseFloat($('cobro-monto-parcial')?.value||0)
     if (!montoParcial || montoParcial <= 0) { showToast('Ingresá un monto válido','⚠️'); return }
-    if (montoParcial > montoTotal) { showToast('El monto no puede superar el total de la cuota','⚠️'); return }
+    if (montoParcial > saldoCuota) { showToast('El monto no puede superar el saldo pendiente de la cuota ('+fmtMoney(saldoCuota)+')','⚠️'); return }
     monto = montoParcial
-    esParcial = montoParcial < montoTotal
+    esParcial = montoParcial < saldoCuota
   }
 
   const cobranza = {
@@ -2948,7 +2958,19 @@ function confirmarCobro() {
     createdAt:new Date().toISOString()
   }
   DB.cobranzas.push(cobranza)
-  cuota.estado='PAGADA'; cuota.fechaPago=new Date().toISOString().split('T')[0]
+
+  // Estado de la cuota: PAGADA solo si se completó el total.
+  // Si es parcial, se mantiene PENDIENTE/VENCIDA (el saldo se calcula descontando lo cobrado).
+  const totalCobradoAhora = yaCobrado + monto
+  if (totalCobradoAhora >= montoTotal - 0.01) {
+    cuota.estado = 'PAGADA'
+    cuota.fechaPago = new Date().toISOString().split('T')[0]
+  } else {
+    // Mantener estado pendiente/vencida — no marcar como pagada
+    const venc = new Date(cuota.fechaVencimiento+'T12:00:00') < new Date()
+    cuota.estado = venc ? 'VENCIDA' : 'PENDIENTE'
+    cuota.fechaPago = null
+  }
   if (sinRecargo) { cuota.montoRecargo = 0; console.log('Recargo condonado ✓') }
 
   const cr = DB.creditos.find(x=>x.id===cuota.creditoId)
@@ -2961,7 +2983,7 @@ function confirmarCobro() {
     const sigueEnMora = DB.cuotas.some(c=>c.estado==='VENCIDA'&&DB.creditos.find(x=>x.id===c.creditoId&&x.clienteId===cli.id))
     if (!sigueEnMora) cli.enMora = false
   }
-  registrarAuditoria('COBRO','cobranza',cobranza.id,{ monto, metodo:pagoMetodo, cliente:cli?.nombreApellido })
+  registrarAuditoria('COBRO','cobranza',cobranza.id,{ monto, metodo:pagoMetodo, cliente:cli?.nombreApellido, parcial:esParcial })
   // Save to Supabase
   supaGuardar('cobranzas', {
     id: cobranza.id, cuota_id: cobranza.cuotaId, usuario_id: cobranza.usuarioId,
@@ -4224,30 +4246,29 @@ function abrirAnular(cobranzaId) {
 
 function confirmarAnulacion() {
   const motivo=$('anular-motivo').value.trim()
-  guardarDB()
   if (!motivo) { showToast('Ingresá el motivo','⚠️'); return }
   const cb=DB.cobranzas.find(c=>c.id===anulacionCobranzaId)
   if (!cb) return
+  if (cb.anulada) { showToast('Esta cobranza ya estaba anulada','⚠️'); closeModal('modal-anular'); return }
   cb.anulada=true; cb.anuladaPor=sesion.id; cb.anuladaAt=new Date().toISOString(); cb.motivoAnulacion=motivo
   const cuota=DB.cuotas.find(c=>c.id===cb.cuotaId)
+  let creditoReactivado=null
   if (cuota) {
     const venc=new Date(cuota.fechaVencimiento+'T12:00:00')<new Date()
     cuota.estado=venc?'VENCIDA':'PENDIENTE'; cuota.fechaPago=null
     const cr=DB.creditos.find(x=>x.id===cuota.creditoId)
-    if (cr?.estado==='CANCELADO') cr.estado='ACTIVO'
+    if (cr?.estado==='CANCELADO') { cr.estado='ACTIVO'; creditoReactivado=cr }
   }
   registrarAuditoria('ANULACION_COBRO','cobranza',cb.id,{ motivo, montoCobrado:cb.montoCobrado })
   // Sync to Supabase
   supa('cobranzas','PATCH',{anulada:true,anulada_por:cb.anuladaPor,anulada_at:cb.anuladaAt,motivo_anulacion:motivo},`?id=eq.${cb.id}`).catch(()=>{})
   if (cuota) supa('cuotas','PATCH',{estado:cuota.estado,fecha_pago:null},`?id=eq.${cuota.id}`).catch(()=>{})
+  if (creditoReactivado) supa('creditos','PATCH',{estado:'ACTIVO'},`?id=eq.${creditoReactivado.id}`).catch(()=>{})
+  guardarDB()
   closeModal('modal-anular')
   closeModal('modal-ver-cliente')
   showToast('Cobranza anulada','❌')
   updateBadges()
-    // Sync to Supabase
-  supa('cobranzas','PATCH',{anulada:true,anulada_por:cb.anuladaPor,anulada_at:cb.anuladaAt,motivo_anulacion:motivo},`?id=eq.${cb.id}`).catch(()=>{})
-  if (cuota) supa('cuotas','PATCH',{estado:cuota.estado,fecha_pago:null},`?id=eq.${cuota.id}`).catch(()=>{})
-  guardarDB()
 }
 
 // ════════════════════════════════════════════════════
@@ -5327,10 +5348,17 @@ function confirmarModFecha() {
   const c = DB.cuotas.find(x=>x.id===modFechaCuotaId)
   const anterior = c.fechaVencimiento
   c.fechaVencimiento = nueva
+  // Recalcular estado según nueva fecha (solo si no está pagada)
+  if (c.estado !== 'PAGADA' && c.estado !== 'CANCELADA') {
+    const venc = new Date(nueva + 'T12:00:00') < new Date()
+    c.estado = venc ? 'VENCIDA' : 'PENDIENTE'
+    if (c.estado === 'VENCIDA') { c.montoRecargo = calcularRecargoCuota(c) }
+    else { c.montoRecargo = 0 }
+  }
   registrarAuditoria('MODIFICACION_FECHA','cuota',c.id,{ fechaAnterior:anterior, fechaNueva:nueva, motivo })
   logActividad('MODIFICACION_FECHA_PAGO','Créditos','EXITOSA',{ cuotaId:c.id, anterior, nueva, motivo })
   // Sync to Supabase
-  supa('cuotas','PATCH',{ fecha_vencimiento: nueva }, `?id=eq.${c.id}`).catch(e => console.warn('confirmarModFecha supa:', e.message))
+  supa('cuotas','PATCH',{ fecha_vencimiento: nueva, estado: c.estado, monto_recargo: c.montoRecargo||0 }, `?id=eq.${c.id}`).catch(e => console.warn('confirmarModFecha supa:', e.message))
   closeModal('modal-mod-fecha')
   guardarDB()
   showToast('✅ Fecha modificada correctamente')
@@ -9132,14 +9160,18 @@ function confirmarCobroMultiple() {
     if (!q) return
     // Guardia anti-doble cobro
     if (q.estado === 'PAGADA') return
-    if (DB.cobranzas.find(cb => cb.cuotaId === q.id && !cb.anulada)) return
     if (q.estado==='VENCIDA') q.montoRecargo = calcularRecargoCuota(q)
-    const monto = parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0)
+    const montoTot = parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0)
+    // Descontar pagos parciales previos
+    const yaPagado = DB.cobranzas.filter(cb => cb.cuotaId === q.id && !cb.anulada)
+      .reduce((s, cb) => s + parseFloat(cb.montoCobrado || 0), 0)
+    const monto = Math.round((montoTot - yaPagado) * 100) / 100
+    if (monto <= 0) return  // ya saldada
     const cobranza = {
       id:uid(), cuotaId:q.id, usuarioId:sesion.id,
       montoCobrado:monto, metodoPago:metodo,
       referenciaPago:ref, esParcial:false, sinRecargo:false,
-      montoOriginalCuota:monto,
+      montoOriginalCuota:montoTot,
       anulada:false, anuladaPor:null, anuladaAt:null,
       createdAt:new Date().toISOString()
     }
