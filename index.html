@@ -3579,6 +3579,8 @@ function renderCreditos() {
         </td>
         <td style="text-align:right;white-space:nowrap">
           ${cr.estado==='PENDIENTE_APROBACION' && sesion?.esAdmin ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();aprobarCredito('${cr.id}')">✅</button> ` : ''}
+          <button class="btn btn-wa btn-sm" title="Enviar link de firma por WhatsApp" onclick="event.stopPropagation();enviarFirmaWhatsAppDirecto('${cr.id}')" style="padding:6px 10px">✍️📲</button>
+          ${sesion?.esAdmin ? `<button class="btn btn-danger btn-sm" title="Eliminar crédito" onclick="event.stopPropagation();pedirEliminarCredito('${cr.id}')" style="padding:6px 10px">🗑️</button>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();verCredito('${cr.id}')">Ver →</button>
         </td>
       </tr>`
@@ -4851,7 +4853,9 @@ function renderAprobacion() {
            </div>`
         : cr.estado==='ACTIVO'
           ? `<button class="btn btn-danger btn-sm" onclick="pedirEliminarCredito('${cr.id}')">🗑️ Eliminar</button>`
-          : ''
+          : sesion?.esAdmin
+            ? `<button class="btn btn-danger btn-sm" onclick="pedirEliminarCredito('${cr.id}')">🗑️ Eliminar</button>`
+            : ''
       return `<tr>
         <td><b>${cli?.nombreApellido||'?'}</b></td>
         <td style="color:var(--muted);font-size:12px">${prodDesc||'?'}</td>
@@ -7318,6 +7322,48 @@ function enviarFirmaWhatsApp() {
   const waUrl = `https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`
   console.log('WA URL length:', waUrl.length)
   window.open(waUrl, '_blank')
+  showToast('📲 WhatsApp abierto con el link de firma')
+  registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido})
+}
+
+// ── Enviar link de firma directo desde la lista (sin abrir el contrato)
+function enviarFirmaWhatsAppDirecto(crId) {
+  const cr  = DB.creditos.find(x=>x.id===crId)
+  const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
+  if (!cr || !cli) { showToast('No se encontró el crédito','⚠️'); return }
+  if (!cli.celular) { showToast('El cliente no tiene celular registrado','⚠️'); return }
+
+  const fmtM = (n) => {
+    const num = Math.round(parseFloat(n)||0)
+    const parts = Math.abs(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g,'.')
+    return (num < 0 ? '-' : '') + '$ ' + parts
+  }
+  const tasa = cr.frecuenciaPago==='diario' ? (DB.config['tasa_diario']||0) : getTasaCuotas(cr.cantidadCuotas)
+  const payload = {
+    crId:        cr.id,
+    empresa:     (DB.empresa.nombre || 'CréditoFácil').slice(0,40),
+    cuit:        DB.empresa.cuit          || '',
+    titular:     cli.nombreApellido,
+    dni:         cli.dni                  || '',
+    descripcion: (cr.descripcion || 'Crédito personal').slice(0,50),
+    monto:       fmtM(cr.precioOriginal),
+    total:       fmtM(cr.totalFinanciado),
+    cuotas:      String(cr.cantidadCuotas || ''),
+    frecuencia:  cr.frecuenciaPago        || 'mensual',
+    primeraCuota:cr.fechaPrimeraCuota     || '',
+    tipoCuota:   cr.tipoCuota             || 'vencida',
+    tna:         tasa + '%'
+  }
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')
+  const baseUrl = window.location.href.split('?')[0].split('#')[0]
+  const link    = `${baseUrl}?firma=${encoded}`
+  const empresa = DB.empresa.nombre || 'CréditoFácil'
+  const nombre  = cli.nombreApellido.split(' ')[0]
+  const msg = `✍️ *Firma de contrato — ${empresa}*\n\nHola ${nombre}! Firmá tu crédito desde acá:\n${link}\n\n_${cr.descripcion||'Crédito'} — ${fmtM(cr.precioOriginal)}_`
+  const tel = cli.celular.replace(/[^0-9]/g,'')
+  const telFmt = tel.startsWith('0') ? '54'+tel.slice(1) : tel.startsWith('54') ? tel : '54'+tel
+  window.open(`https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`, '_blank')
   showToast('📲 WhatsApp abierto con el link de firma')
   registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido})
 }
