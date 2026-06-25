@@ -7208,45 +7208,66 @@ function verificarRetornoPagoMP() {
   window.history.replaceState({}, '', cleanUrl)
 
   if (estado === 'ok') {
-    // Pago aprobado → actualizar cuota localmente (el webhook ya actualizó Supabase)
-    const cuota = DB.cuotas?.find(q => q.id === cuotaId)
-    if (cuota) {
-      cuota.estado    = 'PAGADA'
-      cuota.fechaPago = new Date().toISOString().split('T')[0]
-      guardarDB()
-      updateBadges()
-    }
     try { localStorage.removeItem('mp_cuota_pendiente') } catch(e) {}
-    showToast('✅ ¡Pago aprobado por Mercado Pago!', '💙')
+    showToast('✅ ¡Pago recibido! Confirmando...', '💙')
 
-    // Si el cliente está en el panel de autogestión, recargar cuotas desde Supabase
-    // para que el estado se refleje correctamente sin depender del localStorage
-    if (typeof frCreditoId !== 'undefined' && frCreditoId) {
-      setTimeout(async () => {
-        try {
-          const qResp = await fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + frCreditoId +
-            '&select=*&order=numero_cuota.asc', {
-            headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
-          })
-          if (qResp.ok) {
-            const cuotasActualizadas = await qResp.json()
-            // Actualizar las cuotas de este crédito en DB local
-            cuotasActualizadas.forEach(q => {
-              const local = DB.cuotas?.find(x => x.id === q.id)
-              if (local) { local.estado = q.estado; local.fechaPago = q.fecha_pago }
-            })
+    // El webhook de MP puede tardar unos segundos en marcar la cuota como pagada.
+    // Consultamos Supabase varias veces hasta confirmar (polling).
+    const creditoIdPoll = (typeof frCreditoId !== 'undefined' && frCreditoId) ? frCreditoId : null
+    let intentos = 0
+    const maxIntentos = 12 // ~24 segundos (cada 2s)
+
+    const verificar = async () => {
+      intentos++
+      try {
+        const qResp = await fetch(SUPA_URL + '/rest/v1/cuotas?id=eq.' + cuotaId + '&select=*', {
+          headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
+        })
+        if (qResp.ok) {
+          const rows = await qResp.json()
+          const cuotaRemota = rows?.[0]
+          if (cuotaRemota && cuotaRemota.estado === 'PAGADA') {
+            // ¡Confirmado por el webhook! Actualizar local y refrescar panel
+            const local = DB.cuotas?.find(q => q.id === cuotaId)
+            if (local) { local.estado = 'PAGADA'; local.fechaPago = cuotaRemota.fecha_pago }
             guardarDB()
+            updateBadges()
+            showToast('✅ ¡Pago confirmado! Cuota saldada.', '💚')
+            if (creditoIdPoll) {
+              // Recargar todas las cuotas del crédito y re-renderizar
+              try {
+                const allResp = await fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + creditoIdPoll + '&select=*&order=numero_cuota.asc', {
+                  headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
+                })
+                if (allResp.ok) {
+                  const todas = await allResp.json()
+                  todas.forEach(q => {
+                    const l = DB.cuotas?.find(x => x.id === q.id)
+                    if (l) { l.estado = q.estado; l.fechaPago = q.fecha_pago }
+                  })
+                  guardarDB()
+                }
+              } catch(e) {}
+              mostrarPanelAutogestion(creditoIdPoll)
+            }
+            setTimeout(() => generarComprobantePagoPDF(cuotaId, { metodo: 'MP_ONLINE' }), 600)
+            return // listo, dejar de consultar
           }
-        } catch(e) { console.warn('recarga cuotas post-MP:', e.message) }
-        // Re-renderizar el panel del cliente con datos frescos
-        mostrarPanelAutogestion(frCreditoId)
-      }, 1500)
+        }
+      } catch(e) { console.warn('poll pago MP:', e.message) }
+
+      // Si no confirmó todavía y quedan intentos, reintentar
+      if (intentos < maxIntentos) {
+        setTimeout(verificar, 2000)
+      } else {
+        // Se agotaron los intentos — el pago entró pero el webhook tardó más de lo esperado
+        showToast('⏳ Tu pago fue recibido. Puede tardar unos minutos en reflejarse.', 'ℹ️')
+        if (creditoIdPoll) mostrarPanelAutogestion(creditoIdPoll)
+      }
     }
 
-    // Auto-descargar comprobante de pago
-    setTimeout(() => generarComprobantePagoPDF(cuotaId, { metodo: 'MP_ONLINE' }), 800)
-    // Mostrar botón de comprobante en el panel si está visible
-    mostrarBotonComprobante(cuotaId, 'MP_ONLINE')
+    // Primera consulta tras 1.5s (dar tiempo al webhook)
+    setTimeout(verificar, 1500)
 
   } else if (estado === 'error') {
     showToast('❌ El pago fue rechazado. Intentá de nuevo.', '❌')
