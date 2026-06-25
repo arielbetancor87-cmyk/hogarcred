@@ -1008,6 +1008,20 @@ select.form-input option{background:var(--s2)}
         <p style="font-size:13px;color:var(--acc3)">👥 La gestión completa de usuarios está disponible en <b>🛡️ Panel Admin</b></p>
         <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="goTo('panel-admin')">Ir al Panel de Administración →</button>
       </div>
+
+      <!-- Modo Mercado Pago -->
+      <div class="card" style="margin-top:14px">
+        <h3 style="font-size:14px;font-weight:700;margin-bottom:6px">🔵 Mercado Pago</h3>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Controla si los pagos online son reales o de prueba. En <b>producción</b> los clientes pagan plata de verdad.
+        </p>
+        <div id="mp-modo-estado" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="setMpModo(false)">✅ Activar modo PRODUCCIÓN (cobros reales)</button>
+          <button class="btn btn-ghost btn-sm" onclick="setMpModo(true)">🧪 Modo prueba (sandbox)</button>
+        </div>
+      </div>
+
       <div class="card" style="margin-top:14px">
         <h3 style="font-size:14px;font-weight:700;margin-bottom:6px">💾 Exportar / Importar datos</h3>
         <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
@@ -4662,6 +4676,56 @@ function actualizarResumenConfig() {
       </div>`
     ).join('')
   }
+  renderMpModoEstado()
+}
+
+function renderMpModoEstado() {
+  const el = $('mp-modo-estado')
+  if (!el) return
+  const testing = !!(DB.config?.mp_testing ?? false)
+  if (testing) {
+    el.innerHTML = `<div style="background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);border-radius:var(--r-sm);padding:10px 12px;font-size:13px;color:var(--warn)">
+      🧪 <b>Modo PRUEBA activo</b> — los pagos son simulados (sandbox), no entra plata real.</div>`
+  } else {
+    el.innerHTML = `<div style="background:rgba(0,229,160,.1);border:1px solid rgba(0,229,160,.3);border-radius:var(--r-sm);padding:10px 12px;font-size:13px;color:var(--acc)">
+      ✅ <b>Modo PRODUCCIÓN activo</b> — los clientes pagan con plata real y la cuota se marca como pagada automáticamente.</div>`
+  }
+}
+
+function setMpModo(testing) {
+  if (!testing) {
+    if (!confirm('Vas a activar el modo PRODUCCIÓN de Mercado Pago.\n\nA partir de ahora los clientes van a pagar con plata REAL.\n\n¿Confirmás?')) return
+  }
+  DB.config.mp_testing = testing
+  guardarConfig_silencioso()
+  renderMpModoEstado()
+  showToast(testing ? '🧪 Modo prueba activado' : '✅ Modo producción activado — cobros reales')
+}
+
+// Guarda solo el flag mp_testing en Supabase sin tocar el resto del form
+function guardarConfig_silencioso() {
+  guardarDB()
+  const configObj = {
+    mensajeComprobante:      DB.empresa.mensajeComprobante || '',
+    plantillaMoraTitular:    DB.empresa.plantillaMoraTitular || '',
+    plantillaMoraReferencia: DB.empresa.plantillaMoraReferencia || '',
+    plantillaRecordatorio:   DB.empresa.plantillaRecordatorio || '',
+    plantillaContrato:       DB.empresa.plantillaContrato || '',
+    moneda:                  DB.empresa.moneda || 'ARS',
+    tasa_3_cuotas:           DB.config.tasa_3_cuotas,
+    tasa_6_cuotas:           DB.config.tasa_6_cuotas,
+    tasa_12_cuotas:          DB.config.tasa_12_cuotas,
+    tasa_18_cuotas:          DB.config.tasa_18_cuotas,
+    tasa_diario:             DB.config.tasa_diario,
+    dias_gracia_recargo:     DB.config.dias_gracia_recargo,
+    recargo_diario_pct:      DB.config.recargo_diario_pct,
+    comision_refinanciacion: DB.config.comision_refinanciacion,
+    dias_alerta_vencimiento: DB.config.dias_alerta_vencimiento,
+    frecuencia_default:      DB.config.frecuencia_default,
+    dias_cobro:              DB.config.dias_cobro,
+    mp_testing:              DB.config.mp_testing,
+  }
+  supa('empresas','PATCH',{ config: JSON.stringify(configObj) }, `?id=eq.${empresaId}`).catch(()=>{})
 }
 
 function guardarConfig() {
@@ -6957,7 +7021,7 @@ async function prepararPagoMP(idCuota, monto) {
     }
 
     // ── En testing usar sandbox_init_point, en producción usar init_point ────
-    const MP_TESTING = !!(DB.config?.mp_testing ?? true) // true por defecto hasta configurar
+    const MP_TESTING = !!(DB.config?.mp_testing ?? false) // false = producción (cobros reales)
     const url = MP_TESTING ? (data.sandbox_init_point || data.init_point) : data.init_point
 
     // Guardar cuota pendiente de confirmación antes de redirigir
@@ -8300,7 +8364,7 @@ async function cargarDesdeSupa() {
       // Restore config fields from stored config
       const configFields = ['tasa_3_cuotas','tasa_6_cuotas','tasa_12_cuotas','tasa_18_cuotas',
         'tasa_diario','dias_gracia_recargo','recargo_diario_pct','comision_refinanciacion',
-        'dias_alerta_vencimiento','frecuencia_default','dias_cobro']
+        'dias_alerta_vencimiento','frecuencia_default','dias_cobro','mp_testing']
       configFields.forEach(k => { if (cfg[k] !== undefined) DB.config[k] = cfg[k] })
       if (cfg.config) Object.assign(DB.config, cfg.config)
     }
