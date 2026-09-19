@@ -2838,15 +2838,25 @@ function renderDashboard() {
 function renderCobrosHoy() {
   const buscar = $('s-cobros')?.value?.toLowerCase()||''
   const hoy = todayStr()
-  let cuotas = _myCuotas2.filter(c => (c.estado==='PENDIENTE'||c.estado==='VENCIDA') && c.fechaVencimiento===hoy)
+  // Scope to user's own credits (admin ve todo, vendedor solo lo suyo)
+  const _esAdmCH   = sesion?.esAdmin
+  const _myCredsCH = _esAdmCH ? DB.creditos : DB.creditos.filter(x=>x.usuarioId===sesion?.id)
+  const _myCredIdsCH = new Set(_myCredsCH.map(c=>c.id))
+  const _myCuotasCH  = _esAdmCH ? DB.cuotas    : DB.cuotas.filter(x=>_myCredIdsCH.has(x.creditoId))
+  const _myCobrCH    = _esAdmCH ? DB.cobranzas : DB.cobranzas.filter(cb => {
+    const q = DB.cuotas.find(x=>x.id===cb.cuotaId)
+    return q && _myCredIdsCH.has(q.creditoId)
+  })
+
+  let cuotas = _myCuotasCH.filter(c => (c.estado==='PENDIENTE'||c.estado==='VENCIDA') && c.fechaVencimiento===hoy)
   if (buscar) cuotas = cuotas.filter(c => {
     const cr=DB.creditos.find(x=>x.id===c.creditoId)
     const cli=DB.clientes.find(x=>x.id===cr?.clienteId)
     return cli?.nombreApellido?.toLowerCase().includes(buscar)
   })
   $('ch-pend').textContent = cuotas.length
-  $('ch-cob').textContent  = _myCobr2.filter(c=>!c.anulada&&new Date(c.createdAt).toISOString().split('T')[0]===hoy).length
-  $('ch-venc').textContent = _myCuotas2.filter(c=>c.estado==='VENCIDA').length
+  $('ch-cob').textContent  = _myCobrCH.filter(c=>!c.anulada&&new Date(c.createdAt).toISOString().split('T')[0]===hoy).length
+  $('ch-venc').textContent = _myCuotasCH.filter(c=>c.estado==='VENCIDA').length
 
   const tb = $('tbl-cobros-hoy')
   tb.innerHTML = cuotas.length===0
