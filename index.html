@@ -2094,6 +2094,7 @@ let sesion = null
 let cobroActualCuotaId = null
 let cobroTipo = 'total' // 'total' | 'parcial'
 let ultimaCobranzaId = null
+let ultimaCobranzaIds = []   // cobranzas de un cobro múltiple (vacío si es un cobro simple)
 let pagoMetodo = 'EFECTIVO'
 let editandoProductoId = null
 let editandoClienteId = null
@@ -7074,7 +7075,10 @@ function descargarComprobantePagoActual() {
   // ultimaCobranzaId fue seteada al confirmar el cobro
   const cobranza = DB.cobranzas.find(x => x.id === ultimaCobranzaId)
   if (!cobranza) { showToast('No se encontró el cobro','⚠️'); return }
-  generarComprobantePagoPDF(cobranza.cuotaId, { metodo: cobranza.metodoPago })
+  const grupo = (ultimaCobranzaIds.length > 1 && ultimaCobranzaIds.includes(cobranza.id))
+    ? ultimaCobranzaIds.map(id => DB.cobranzas.find(x => x.id === id)).filter(Boolean)
+    : null
+  generarComprobantePagoPDF(cobranza.cuotaId, { metodo: cobranza.metodoPago, grupo })
 }
 
 function generarComprobantePagoPDF(cuotaId, opts) {
@@ -7091,7 +7095,14 @@ function generarComprobantePagoPDF(cuotaId, opts) {
       .sort((a,b) => (a.numeroCuota||0) - (b.numeroCuota||0))
     const pagadas    = cuotasCr.filter(q => q.estado === 'PAGADA')
     const pendientes = cuotasCr.filter(q => q.estado !== 'PAGADA')
-    const montoCuota = parseFloat(cuota.montoOriginal||0) + parseFloat(cuota.montoRecargo||0)
+    // Cobro múltiple: varias cuotas pagadas en el mismo recibo
+    const grupoPDF    = (opts.grupo && opts.grupo.length > 1) ? opts.grupo : null
+    const idsDelPago  = grupoPDF ? grupoPDF.map(c => c.cuotaId) : [cuotaId]
+    const numsEsteCr  = cuotasCr.filter(q => idsDelPago.includes(q.id)).map(q => q.numeroCuota || '?')
+    const otrosCr     = grupoPDF ? grupoPDF.length - numsEsteCr.length : 0
+    const montoCuota  = grupoPDF
+      ? grupoPDF.reduce((s,c) => s + parseFloat(c.montoCobrado || 0), 0)
+      : parseFloat(cuota.montoOriginal||0) + parseFloat(cuota.montoRecargo||0)
     const saldoRestante = pendientes.reduce((s,q) =>
       s + parseFloat(q.montoOriginal||0) + parseFloat(q.montoRecargo||0), 0)
 
@@ -7144,7 +7155,11 @@ function generarComprobantePagoPDF(cuotaId, opts) {
     doc.setFillColor(240,250,245); doc.setDrawColor(0,200,130)
     doc.roundedRect(M, y-5, CW, 26, 3, 3, 'FD')
     doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(80,80,80)
-    doc.text('Cuota '+(cuota.numeroCuota||'?')+' de '+cuotasCr.length+' — Pago registrado', M+5, y+2)
+    doc.text(
+      grupoPDF
+        ? 'Cuotas '+numsEsteCr.join(', ')+' de '+cuotasCr.length+(otrosCr>0?' (+'+otrosCr+' de otros créditos)':'')+' — Pago registrado'
+        : 'Cuota '+(cuota.numeroCuota||'?')+' de '+cuotasCr.length+' — Pago registrado',
+      M+5, y+2, {maxWidth: CW-10})
     doc.setFont('helvetica','bold'); doc.setFontSize(22); doc.setTextColor(0,150,80)
     doc.text(fmtMoney(montoCuota), M+5, y+13)
     doc.setTextColor(0,0,0); y+=28
@@ -7177,7 +7192,7 @@ function generarComprobantePagoPDF(cuotaId, opts) {
     cuotasCr.forEach(q => {
       if (y > 265) { doc.addPage(); y = M }
       const m = parseFloat(q.montoOriginal||0)+parseFloat(q.montoRecargo||0)
-      const esEsta = q.id === cuotaId
+      const esEsta = idsDelPago.includes(q.id)
       const estadoTxt = q.estado === 'PAGADA' ? '✓ PAGADA' : 'Pendiente'
       if (esEsta) { doc.setFillColor(240,250,245); doc.rect(M, y-4, CW, 7, 'F') }
       doc.setFont('helvetica', esEsta?'bold':'normal')
@@ -7197,7 +7212,7 @@ function generarComprobantePagoPDF(cuotaId, opts) {
     if (emp.telefono) doc.text('Consultas: '+emp.telefono, W/2, y, {align:'center'})
     doc.setTextColor(0,0,0)
 
-    const filename = 'comprobante_cuota'+(cuota.numeroCuota||'')+'_'+(cli?.nombreApellido||'cliente').replace(/\\s+/g,'_')+'.pdf'
+    const filename = (grupoPDF ? 'comprobante_cuotas'+numsEsteCr.join('-') : 'comprobante_cuota'+(cuota.numeroCuota||''))+'_'+(cli?.nombreApellido||'cliente').replace(/\\s+/g,'_')+'.pdf'
     doc.save(filename)
     showToast('📥 Comprobante descargado')
     return filename
@@ -7867,7 +7882,23 @@ function generarDatosComprobante(cobranzaId) {
   const metodos = { EFECTIVO:'Efectivo 💵', TRANSFERENCIA:'Transferencia 🏦', MERCADOPAGO:'MercadoPago 🔵' }
   const fecha = new Date(cb.createdAt)
 
+  // Cobro múltiple: un solo recibo con el detalle de todas las cuotas cobradas
+  let items = null, montoTotal = fmtMoney(cb.montoCobrado)
+  if (ultimaCobranzaIds.length > 1 && ultimaCobranzaIds.includes(cobranzaId)) {
+    const grupo = ultimaCobranzaIds.map(id => DB.cobranzas.find(x=>x.id===id)).filter(Boolean)
+    items = grupo.map(c => {
+      const q = DB.cuotas.find(x=>x.id===c.cuotaId)
+      const k = DB.creditos.find(x=>x.id===q?.creditoId)
+      return {
+        texto: (k?.descripcion || 'Crédito') + ' — Cuota ' + (q?.numeroCuota || '?') + ' de ' + (k?.cantidadCuotas || '?'),
+        monto: fmtMoney(c.montoCobrado)
+      }
+    })
+    montoTotal = fmtMoney(grupo.reduce((s,c) => s + parseFloat(c.montoCobrado || 0), 0))
+  }
+
   return {
+    items:        items,
     empresa:      emp.nombre      || 'CréditoFácil',
     razonSocial:  emp.razonSocial || '',
     cuit:         emp.cuit        || '',
@@ -7881,7 +7912,7 @@ function generarDatosComprobante(cobranzaId) {
     descripcion:  cr?.descripcion || 'Crédito personal',
     numCuota:     cuota?.numeroCuota || 0,
     totalCuotas:  cr?.cantidadCuotas || 0,
-    monto:        fmtMoney(cb.montoCobrado),
+    monto:        montoTotal,
     metodo:       metodos[cb.metodoPago] || cb.metodoPago,
     cobrador:     cobrador?.nombreCompleto || '—',
     referencia:   cb.referenciaPago || null,
@@ -7897,6 +7928,11 @@ function renderComprobanteHtml(d, forPrint=false) {
     ? '<img src="'+d.logo+'" style="height:50px;max-width:120px;object-fit:contain;margin-bottom:6px"><br>'
     : ''
   const numComp = d.cobranzaId.slice(-8).toUpperCase()
+  const filasDetalle = d.items
+    ? '<tr><td style="padding:4px 0;color:#555;vertical-align:top">Cuotas</td><td style="padding:4px 0">' +
+        d.items.map(i => i.texto + ' — <b>' + i.monto + '</b>').join('<br>') + '</td></tr>'
+    : '<tr><td style="padding:4px 0;color:#555">Concepto</td><td style="padding:4px 0">' + d.descripcion + '</td></tr>' +
+      '<tr><td style="padding:4px 0;color:#555">Cuota</td><td style="padding:4px 0">' + d.numCuota + ' de ' + d.totalCuotas + '</td></tr>'
 
   return '<div style="max-width:420px;margin:0 auto;font-family:serif">' +
     // Header empresa
@@ -7916,8 +7952,7 @@ function renderComprobanteHtml(d, forPrint=false) {
       '<tr><td style="padding:4px 0;color:#555">Fecha</td><td style="padding:4px 0">' + d.fechaStr + '  ' + d.horaStr + '</td></tr>' +
       '<tr><td style="padding:4px 0;color:#555">Cliente</td><td style="padding:4px 0;font-weight:bold">' + d.cliente + '</td></tr>' +
       '<tr><td style="padding:4px 0;color:#555">DNI</td><td style="padding:4px 0">' + d.dni + '</td></tr>' +
-      '<tr><td style="padding:4px 0;color:#555">Concepto</td><td style="padding:4px 0">' + d.descripcion + '</td></tr>' +
-      '<tr><td style="padding:4px 0;color:#555">Cuota</td><td style="padding:4px 0">' + d.numCuota + ' de ' + d.totalCuotas + '</td></tr>' +
+      filasDetalle +
       (d.referencia ? '<tr><td style="padding:4px 0;color:#555">Referencia</td><td style="padding:4px 0">' + d.referencia + '</td></tr>' : '') +
     '</table>' +
     // Monto destacado
@@ -7935,7 +7970,11 @@ function renderComprobanteHtml(d, forPrint=false) {
   '</div>'
 }
 
-function abrirComprobante(cobranzaId) {
+function abrirComprobante(cobranzaId, grupo) {
+  // Siempre fijar cuál es el cobro actual: los botones de WhatsApp / imprimir /
+  // descargar PDF dependen de este dato (antes fallaban al reimprimir desde el historial)
+  ultimaCobranzaId  = cobranzaId
+  ultimaCobranzaIds = (Array.isArray(grupo) && grupo.length > 1) ? grupo : []
   const d = generarDatosComprobante(cobranzaId)
   if (!d) return
   $('comprobante-preview').innerHTML = renderComprobanteHtml(d)
@@ -7954,8 +7993,9 @@ function enviarComprobanteWA() {
     '📅 ' + d.fechaStr + ' ' + d.horaStr,
     '',
     '👤 Cliente: *' + d.cliente + '*',
-    '📦 Concepto: ' + d.descripcion,
-    '💳 Cuota: ' + d.numCuota + ' de ' + d.totalCuotas,
+    ...(d.items
+      ? d.items.map(i => '💳 ' + i.texto + ': ' + i.monto)
+      : ['📦 Concepto: ' + d.descripcion, '💳 Cuota: ' + d.numCuota + ' de ' + d.totalCuotas]),
     '',
     '💰 *TOTAL PAGADO: ' + d.monto + '*',
     '🏷️ Método: ' + d.metodo,
@@ -9248,7 +9288,7 @@ function confirmarCobroMultiple() {
   const metodo = window._multiCobroMetodo || 'EFECTIVO'
   const refEl  = document.getElementById('multi-ref-input')
   const ref    = refEl ? refEl.value.trim() || null : null
-  const total  = window._multiCobroTotal  || 0
+  const creadas = []   // cobranzas efectivamente registradas en este cobro múltiple
 
   ids.forEach(cuotaId => {
     const q = DB.cuotas.find(x=>x.id===cuotaId)
@@ -9271,6 +9311,7 @@ function confirmarCobroMultiple() {
       createdAt:new Date().toISOString()
     }
     DB.cobranzas.push(cobranza)
+    creadas.push(cobranza)
     q.estado    = 'PAGADA'
     q.fechaPago = new Date().toISOString().split('T')[0]
     const cr = DB.creditos.find(x=>x.id===q.creditoId)
@@ -9290,8 +9331,21 @@ function confirmarCobroMultiple() {
   guardarDB()
   updateBadges()
   cerrarModalCobroMultiple()
-  showToast('✅ ' + ids.length + ' cuotas cobradas (' + metodo + ') — ' + fmtMoney(total))
+
+  if (!creadas.length) {
+    showToast('⚠️ Las cuotas seleccionadas ya estaban cobradas')
+    seleccionarClienteRapido(crClienteId)
+    return
+  }
+
+  const totalCobrado = creadas.reduce((s,c) => s + parseFloat(c.montoCobrado||0), 0)
+  showToast('✅ ' + creadas.length + (creadas.length===1 ? ' cuota cobrada (' : ' cuotas cobradas (') + metodo + ') — ' + fmtMoney(totalCobrado))
   seleccionarClienteRapido(crClienteId)
+
+  // Un solo recibo con todas las cuotas cobradas
+  const idsCreadas = creadas.map(c => c.id)
+  registrarAuditoria('COBRO_MULTIPLE','cobranza',idsCreadas[0],{ cuotas:creadas.length, total:totalCobrado, metodo })
+  setTimeout(() => abrirComprobante(idsCreadas[0], idsCreadas), 350)
 }
 
 
