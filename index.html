@@ -2798,7 +2798,7 @@ function renderDashboard() {
   const pendAprobDash = myCreditos.filter(c=>c.estado==='PENDIENTE_APROBACION').length
   $('ds-pend-aprobacion').textContent = pendAprobDash>0 ? `⏳ ${pendAprobDash} pend. aprobación` : ''
   $('ds-hoy').textContent      = cobHoy.length
-  $('ds-hoy-monto').textContent = cobHoy.length ? fmtMoney(cobHoy.reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)) : ''
+  $('ds-hoy-monto').textContent = cobHoy.length ? fmtMoney(sumarSaldos(cobHoy)) : ''
   $('ds-morosos').textContent  = morosos.length
 
   const tbCob = $('dash-cobros-hoy')
@@ -2808,7 +2808,7 @@ function renderDashboard() {
       const cr = DB.creditos.find(x=>x.id===c.creditoId)
       const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
       const prodDesc = cr?.descripcion || 'Crédito personal'
-      const monto = parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo)
+      const monto = calcularSaldoCuota(c)
       return `<tr onclick="abrirCobro('${c.id}')">
         <td><b>${cli?.nombreApellido||'?'}</b></td>
         <td style="color:var(--muted)">${prodDesc||'?'}</td>
@@ -2822,7 +2822,7 @@ function renderDashboard() {
     ? `<div class="card" style="text-align:center;padding:20px;color:var(--muted)">✅ Sin clientes atrasados</div>`
     : morosos.slice(0,3).map(cli => {
       const cuotasVenc = myCuotas.filter(c=>c.estado==='VENCIDA' && myCreditos.find(cr=>cr.id===c.creditoId&&cr.clienteId===cli.id))
-      const total = cuotasVenc.reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+      const total = sumarSaldos(cuotasVenc)
       const dias = Math.max(...cuotasVenc.map(c=>Math.floor((new Date()-new Date(c.fechaVencimiento+'T12:00:00'))/(86400000))))
       const ini = cli.nombreApellido.split(' ').map(n=>n[0]).slice(0,2).join('')
       return `<div class="card" style="display:flex;align-items:center;gap:12px;cursor:pointer;border-color:rgba(255,64,96,.2)" onclick="verCliente('${cli.id}')">
@@ -2866,7 +2866,7 @@ function renderCobrosHoy() {
       const cr = DB.creditos.find(x=>x.id===c.creditoId)
       const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
       const prodDesc = cr?.descripcion || 'Crédito personal'
-      const monto = parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo)
+      const monto = calcularSaldoCuota(c)
       const tieneRecargo = parseFloat(c.montoRecargo)>0
       return `<tr onclick="abrirCobro('${c.id}')" style="cursor:pointer">
         <td>
@@ -3055,7 +3055,7 @@ function generarMensajesMora(clienteId) {
   const cli = DB.clientes.find(c=>c.id===clienteId)
   if (!cli) return
   const cuotasV = DB.cuotas.filter(c=>c.estado==='VENCIDA'&&DB.creditos.find(cr=>cr.id===c.creditoId&&cr.clienteId===clienteId))
-  const totalDeuda = cuotasV.reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+  const totalDeuda = sumarSaldos(cuotasV)
   const deudaFmt = fmtMoney(totalDeuda)
   const fechaHoy = new Date().toLocaleDateString('es-AR')
 
@@ -3161,7 +3161,7 @@ function renderDeudores() {
   let totalDeuda=0, totalDias=0
   const items = morosos.map(cli => {
     const cuotasV = DB.cuotas.filter(c=>c.estado==='VENCIDA'&&DB.creditos.find(cr=>cr.id===c.creditoId&&cr.clienteId===cli.id))
-    const total = cuotasV.reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+    const total = sumarSaldos(cuotasV)
     const dias = Math.max(...cuotasV.map(c=>Math.floor((new Date()-new Date(c.fechaVencimiento+'T12:00:00'))/86400000)))
     totalDeuda+=total; totalDias+=dias
     return {cli, cuotasV, total, dias}
@@ -3650,7 +3650,7 @@ function verCredito(id) {
   const pagadas=cuotas.filter(c=>c.estado==='PAGADA').length
   const prog=Math.round(pagadas/cr.cantidadCuotas*100)
   const totalPag=DB.cobranzas.filter(c=>!c.anulada&&cuotas.find(q=>q.id===c.cuotaId)).reduce((s,c)=>s+parseFloat(c.montoCobrado),0)
-  const totalPend=cuotas.filter(c=>c.estado!=='PAGADA'&&c.estado!=='CANCELADA').reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+  const totalPend=sumarSaldos(cuotas)
 
   $('vc-titulo').innerHTML = (cr.numeroCredito
     ? '<span style="font-size:13px;color:var(--acc);font-weight:700;margin-right:6px">' + fmtNumeroCredito(cr.numeroCredito) + '</span>'
@@ -3688,15 +3688,17 @@ function verCredito(id) {
       <table>
         <thead><tr><th>#</th><th>Vencimiento</th><th>Importe</th><th>Estado</th><th></th></tr></thead>
         <tbody>${cuotas.map(q=>{
-          const monto=parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo)
+          const montoTotalQ=parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo)
+          const cobradoQ=cobradoCuota(q.id)
+          const monto=q.estado==='PAGADA'?montoTotalQ:calcularSaldoCuota(q)
           const cb=DB.cobranzas.find(c=>c.cuotaId===q.id&&!c.anulada)
           const cobsQ=DB.cobranzas.filter(c=>c.cuotaId===q.id&&!c.anulada)
-          const hayParcial=cobsQ.some(c=>c.esParcial)
+          const hayParcial=cobradoQ>0&&q.estado!=='PAGADA'
           const diasAtr=q.estado==='VENCIDA'?Math.floor((new Date()-new Date(q.fechaVencimiento+'T12:00:00'))/86400000):null
           return `<tr style="${q.estado==='PAGADA'?'opacity:.55':''}">
             <td style="font-weight:700;color:var(--muted)">${q.numeroCuota}</td>
             <td>${fmtDate(q.fechaVencimiento)}</td>
-            <td><b style="color:${parseFloat(q.montoRecargo)>0?'var(--danger)':''}">${fmtMoney(monto)}</b></td>
+            <td><b style="color:${parseFloat(q.montoRecargo)>0?'var(--danger)':''}">${fmtMoney(monto)}</b>${hayParcial?`<br><small style="color:var(--muted)">de ${fmtMoney(montoTotalQ)} · pagó ${fmtMoney(cobradoQ)}</small>`:''}</td>
             <td>${chipEstado(q.estado)+(hayParcial&&q.estado!=='PAGADA'?'<span class="chip chip-warn" style="font-size:10px;margin-left:4px">💸 Parcial</span>':'')}${diasAtr!==null?`<br><small style="color:var(--danger)">${diasAtr}d</small>`:''}</td>
             <td>
               <div style="display:flex;gap:4px;flex-wrap:wrap">
@@ -4367,7 +4369,7 @@ function selRefCliente(id) {
   }
   $('ref-creditos-list').innerHTML=creds.map(cr=>{
     const prodDesc = cr?.descripcion || 'Crédito personal'
-    const deuda=DB.cuotas.filter(c=>c.creditoId===cr.id&&(c.estado==='PENDIENTE'||c.estado==='VENCIDA')).reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+    const deuda=sumarSaldos(DB.cuotas.filter(c=>c.creditoId===cr.id&&(c.estado==='PENDIENTE'||c.estado==='VENCIDA')))
     return `<button id="refcr-${cr.id}" onclick="toggleRefCredito('${cr.id}')" style="text-align:left;padding:12px;border-radius:var(--r-sm);border:2px solid var(--bord);background:var(--s2);cursor:pointer;width:100%;font-family:'DM Sans',sans-serif;margin-bottom:6px;transition:all .15s">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div><p style="font-weight:600;font-size:13px;color:var(--text)">${prodDesc}</p><p style="font-size:11px;color:var(--muted)">${cr.cantidadCuotas} cuotas</p></div>
@@ -4401,7 +4403,7 @@ function toggleRefCredito(id) {
 function renderRefPlan() {
   $('ref-plan-section').style.display='block'
   const deudaTotal=DB.creditos.filter(c=>refCreditosIds.includes(c.id)).reduce((sum,cr)=>{
-    return sum+DB.cuotas.filter(c=>c.creditoId===cr.id&&(c.estado==='PENDIENTE'||c.estado==='VENCIDA')).reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+    return sum+sumarSaldos(DB.cuotas.filter(c=>c.creditoId===cr.id&&(c.estado==='PENDIENTE'||c.estado==='VENCIDA')))
   },0)
   const comPct=DB.config.comision_refinanciacion||5
   $('ref-planes').innerHTML=[3,6,12,18].map(n=>{
@@ -4426,7 +4428,7 @@ function renderRefPlan() {
 
 function confirmarRefinanciacion() {
   if (!refClienteId||refCreditosIds.length===0){showToast('Seleccioná cliente y créditos','⚠️');return}
-  const deudaTotal=DB.creditos.filter(c=>refCreditosIds.includes(c.id)).reduce((sum,cr)=>sum+DB.cuotas.filter(c=>c.creditoId===cr.id&&(c.estado==='PENDIENTE'||c.estado==='VENCIDA')).reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0),0)
+  const deudaTotal=DB.creditos.filter(c=>refCreditosIds.includes(c.id)).reduce((sum,cr)=>sum+sumarSaldos(DB.cuotas.filter(c=>c.creditoId===cr.id&&(c.estado==='PENDIENTE'||c.estado==='VENCIDA'))),0)
   const comPct=DB.config.comision_refinanciacion||5
   const tasa=DB.config[`tasa_${refCuotas}_cuotas`]||0
   const tot=deudaTotal*(1+comPct/100)*(1+tasa/100), mc=tot/refCuotas
@@ -5805,10 +5807,10 @@ function renderInformes() {
     return true
   }).reduce((s,cb)=>s+parseFloat(cb.montoCobrado||0),0)
   const totalPendiente = creds.filter(c=>c.estado==='ACTIVO').reduce((s,c)=>{
-    const pend = DB.cuotas.filter(q=>q.creditoId===c.id&&q.estado!=='PAGADA'&&q.estado!=='CANCELADA').reduce((a,q)=>a+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo),0)
+    const pend = sumarSaldos(DB.cuotas.filter(q=>q.creditoId===c.id&&q.estado!=='PAGADA'&&q.estado!=='CANCELADA'))
     return s+pend
   },0)
-  const totalMora = DB.cuotas.filter(q=>q.estado==='VENCIDA'&&myCreditIds.has(q.creditoId)).reduce((s,q)=>s+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo),0)
+  const totalMora = sumarSaldos(DB.cuotas.filter(q=>q.estado==='VENCIDA'&&myCreditIds.has(q.creditoId)))
   const totalCancelados = creds.filter(c=>c.estado==='CANCELADO').length
 
   $('inf-totales').innerHTML = [
@@ -5909,7 +5911,7 @@ function renderInformes() {
 }
 
 function dataCobrosHoyTotal(cuotasScope) {
-  return cuotasDelDia(cuotasScope).reduce((s,c)=>s+parseFloat(c.montoOriginal)+parseFloat(c.montoRecargo),0)
+  return sumarSaldos(cuotasDelDia(cuotasScope))
 }
 
 function exportarPDF() {
@@ -6415,26 +6417,16 @@ async function cargarContratoRemoto(token) {
 
     // ── Check if already signed ────────────────────────────────────────────
     try {
-      const resp = await fetch(
-        SUPA_URL + '/rest/v1/creditos?id=eq.' + frCreditoId + '&select=datos',
-        { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
-      )
-      if (resp.ok) {
-        const rows = await resp.json()
-        const raw  = rows[0]?.datos
-        if (raw) {
-          const d = typeof raw==='string' ? JSON.parse(raw) : raw
-          if (d.firmaData) {
-            fr_show('fr-ya-firmado')
-            $('fr-ya-firmado-fecha').textContent = 'Firmado el ' +
-              (d.firmaFecha ? new Date(d.firmaFecha).toLocaleString('es-AR') : '—')
-            // Auto-mostrar panel de autogestión después de 1.5s
-            setTimeout(() => mostrarPanelAutogestion(frCreditoId), 1500)
-            return
-          }
-        }
+      const est = await portalApi('estado', { crId: frCreditoId })
+      if (est.ok && est.data.firmado) {
+        fr_show('fr-ya-firmado')
+        $('fr-ya-firmado-fecha').textContent = 'Firmado el ' +
+          (est.data.firmaFecha ? new Date(est.data.firmaFecha).toLocaleString('es-AR') : '—')
+        // Auto-mostrar panel de autogestión después de 1.5s
+        setTimeout(() => mostrarPanelAutogestion(frCreditoId), 1500)
+        return
       }
-    } catch(e) { console.warn('Could not check firma status (RLS):', e.message) }
+    } catch(e) { console.warn('No se pudo verificar el estado de la firma:', e.message) }
 
     // ── PASO 1: Show DNI validation screen ─────────────────────────────────
     fr_show('fr-step-dni')
@@ -6479,6 +6471,7 @@ function frValidarDni() {
 
   // ── DNI OK → save to localStorage and show contract ───────────────────
   try { localStorage.setItem('hogarcred_firma_dni', dniIngresado) } catch(e) {}
+  window._frDniIngresado = dniIngresado
 
   ['fr-step-dni','fr-loading','fr-error','fr-ya-firmado']
     .forEach(id => { const el=$(id); if(el) el.style.display='none' })
@@ -6706,6 +6699,24 @@ function frActualizarEstadoFirma() {
 
 
 
+// ── Llamada a la función del servidor que atiende el panel público ─────────
+async function portalApi(accion, datos) {
+  const resp = await fetch('/api/portal', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ accion, ...(datos || {}) })
+  })
+  let data = {}
+  try { data = await resp.json() } catch(e) {}
+  return { ok: resp.ok, status: resp.status, data }
+}
+
+// Monto exacto que se cobrará de una cuota (lo calcula el servidor, con mora al día)
+function montoCuotaPortal(q) {
+  if (q.estado !== 'PAGADA' && q.saldo != null) return parseFloat(q.saldo)
+  return parseFloat(q.monto_original || 0) + parseFloat(q.monto_recargo || 0)
+}
+
 async function enviarFirmaRemota() {
   if (frEmpty) {
     alert('Por favor, dibujá tu firma antes de continuar.')
@@ -6742,36 +6753,22 @@ async function enviarFirmaRemota() {
 
   // ── Guardar en Supabase ────────────────────────────────────────────────────
   try {
-    const resp = await fetch(SUPA_URL + '/rest/v1/firmas', {
-      method:  'POST',
-      headers: {
-        'apikey':        SUPA_KEY,
-        'Authorization': 'Bearer ' + SUPA_KEY,
-        'Content-Type':  'application/json',
-        'Prefer':        'return=minimal'
-      },
-      body: JSON.stringify(firmaRecord)
+    const r = await portalApi('firmar', {
+      crId:      frCreditoId,
+      firmaData: firmaData,
+      dni:       window._frDniIngresado || payload.dni || ''
     })
-    if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + await resp.text())
-
-    // También actualizar credito.datos (puede fallar por RLS, no es crítico)
-    try {
-      await fetch(SUPA_URL + '/rest/v1/creditos?id=eq.' + frCreditoId, {
-        method:  'PATCH',
-        headers: {
-          'apikey':        SUPA_KEY,
-          'Authorization': 'Bearer ' + SUPA_KEY,
-          'Content-Type':  'application/json',
-          'Prefer':        'return=minimal'
-        },
-        body: JSON.stringify({
-          datos: JSON.stringify({ firmaData, firmaFecha, estado_contrato: 'firmada' })
-        })
-      })
-    } catch(e) { console.warn('PATCH credito (RLS):', e.message) }
+    // 409 = ya estaba firmado: no es un error para el cliente
+    if (!r.ok && r.status !== 409) {
+      if (r.status >= 500) throw new Error('HTTP ' + r.status)   // falla del servidor → guardar offline
+      // Rechazo del servidor (DNI incorrecto, firma inválida…): avisar y dejar reintentar
+      alert(r.data?.mensaje || 'No se pudo guardar la firma. Intentá de nuevo.')
+      if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar y firmar contrato' }
+      return
+    }
 
     try { localStorage.removeItem('firma_pendiente') } catch(e) {}
-    console.log('✅ Firma guardada en Supabase')
+    console.log('✅ Firma guardada')
 
   } catch(err) {
     // Offline fallback — guardar en localStorage
@@ -6810,26 +6807,15 @@ async function reintentarFirmaPendiente() {
 
   console.log('🔄 Reintentando firma pendiente...')
   try {
-    const firmaSend2 = {
-      credito_id:    pending.credito_id,
-      firma_data:    pending.firma_data,
-      firma_fecha:   pending.firma_fecha,
-      firmado_desde: pending.firmado_desde || 'whatsapp_link',
-      dni_firmante:  pending.dni_firmante || null
-    }
-    const resp = await fetch(SUPA_URL + '/rest/v1/firmas', {
-      method:  'POST',
-      headers: {
-        'apikey':        SUPA_KEY,
-        'Authorization': 'Bearer ' + SUPA_KEY,
-        'Content-Type':  'application/json',
-        'Prefer':        'return=minimal'
-      },
-      body: JSON.stringify(firmaSend2)
+    const r = await portalApi('firmar', {
+      crId:      pending.credito_id,
+      firmaData: pending.firma_data,
+      dni:       pending.dni_firmante || ''
     })
-    if (resp.ok) {
+    // Éxito, o rechazo definitivo (ya firmado / DNI / no existe): no tiene sentido reintentar
+    if (r.ok || [403, 404, 409].includes(r.status)) {
       localStorage.removeItem('firma_pendiente')
-      console.log('✅ Firma pendiente enviada correctamente')
+      console.log('Firma pendiente resuelta (' + r.status + ')')
     }
   } catch(e) {
     console.warn('Reintento fallido, se intentará luego')
@@ -6860,18 +6846,9 @@ async function mostrarPanelAutogestion(creditoId) {
   let cuotas   = []
   let credito  = null
   try {
-    const [cResp, qResp] = await Promise.all([
-      fetch(SUPA_URL + '/rest/v1/creditos?id=eq.' + creditoId + '&select=*', {
-        headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
-      }),
-      fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + creditoId +
-            '&select=*&order=numero_cuota.asc', {
-        headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
-      })
-    ])
-    if (cResp.ok) { const arr = await cResp.json(); credito = arr[0] || null }
-    if (qResp.ok) cuotas = await qResp.json()
-  } catch(e) { console.warn('Panel autogestión: no se pudo cargar de Supabase:', e.message) }
+    const r = await portalApi('panel', { crId: creditoId })
+    if (r.ok) { credito = r.data.credito || null; cuotas = r.data.cuotas || [] }
+  } catch(e) { console.warn('Panel autogestión: no se pudo cargar:', e.message) }
 
   // ── Fallback: generar cuotas desde payload si Supabase no las devolvió ─────
   if (!cuotas.length && payload.cuotas && payload.total) {
@@ -6903,8 +6880,7 @@ async function mostrarPanelAutogestion(creditoId) {
   const hoy       = new Date(); hoy.setHours(0,0,0,0)
   const pendientes = cuotas.filter(q => q.estado !== 'PAGADA')
   const pagadas    = cuotas.filter(q => q.estado === 'PAGADA')
-  const saldoTotal = pendientes.reduce((s, q) =>
-    s + parseFloat(q.monto_original || 0) + parseFloat(q.monto_recargo || 0), 0)
+  const saldoTotal = pendientes.reduce((s, q) => s + montoCuotaPortal(q), 0)
   const total = cuotas.length
 
   // ── Nombre del cliente ─────────────────────────────────────────────────────
@@ -6945,7 +6921,7 @@ async function mostrarPanelAutogestion(creditoId) {
     const pagada  = q.estado === 'PAGADA'
     const vence   = new Date(q.fecha_vencimiento + 'T12:00:00')
     const vencida = !pagada && vence < hoy
-    const monto   = parseFloat(q.monto_original || 0) + parseFloat(q.monto_recargo || 0)
+    const monto   = montoCuotaPortal(q)
     const borde   = i < cuotas.length - 1 ? 'border-bottom:1px solid #2a2d3e;' : ''
     const color   = pagada ? '#00e5a0' : vencida ? '#ff4060' : '#fff'
     const bgNum   = pagada ? 'rgba(0,229,160,.12)' : vencida ? 'rgba(255,64,96,.12)' : 'rgba(0,153,255,.1)'
@@ -7078,7 +7054,7 @@ function descargarComprobantePagoActual() {
   const grupo = (ultimaCobranzaIds.length > 1 && ultimaCobranzaIds.includes(cobranza.id))
     ? ultimaCobranzaIds.map(id => DB.cobranzas.find(x => x.id === id)).filter(Boolean)
     : null
-  generarComprobantePagoPDF(cobranza.cuotaId, { metodo: cobranza.metodoPago, grupo })
+  generarComprobantePagoPDF(cobranza.cuotaId, { metodo: cobranza.metodoPago, grupo, monto: cobranza.montoCobrado })
 }
 
 function generarComprobantePagoPDF(cuotaId, opts) {
@@ -7102,9 +7078,8 @@ function generarComprobantePagoPDF(cuotaId, opts) {
     const otrosCr     = grupoPDF ? grupoPDF.length - numsEsteCr.length : 0
     const montoCuota  = grupoPDF
       ? grupoPDF.reduce((s,c) => s + parseFloat(c.montoCobrado || 0), 0)
-      : parseFloat(cuota.montoOriginal||0) + parseFloat(cuota.montoRecargo||0)
-    const saldoRestante = pendientes.reduce((s,q) =>
-      s + parseFloat(q.montoOriginal||0) + parseFloat(q.montoRecargo||0), 0)
+      : (opts.monto != null ? parseFloat(opts.monto) : parseFloat(cuota.montoOriginal||0) + parseFloat(cuota.montoRecargo||0))
+    const saldoRestante = sumarSaldos(pendientes)
 
     // Próxima cuota a vencer
     const proxima = pendientes.sort((a,b) =>
@@ -7245,12 +7220,9 @@ function verificarRetornoPagoMP() {
     const verificar = async () => {
       intentos++
       try {
-        const qResp = await fetch(SUPA_URL + '/rest/v1/cuotas?id=eq.' + cuotaId + '&select=*', {
-          headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
-        })
-        if (qResp.ok) {
-          const rows = await qResp.json()
-          const cuotaRemota = rows?.[0]
+        const rq = await portalApi('cuota', { cuotaId })
+        if (rq.ok) {
+          const cuotaRemota = rq.data
           if (cuotaRemota && cuotaRemota.estado === 'PAGADA') {
             // ¡Confirmado por el webhook! Actualizar local y refrescar panel
             const local = DB.cuotas?.find(q => q.id === cuotaId)
@@ -7261,12 +7233,9 @@ function verificarRetornoPagoMP() {
             if (creditoIdPoll) {
               // Recargar todas las cuotas del crédito y re-renderizar
               try {
-                const allResp = await fetch(SUPA_URL + '/rest/v1/cuotas?credito_id=eq.' + creditoIdPoll + '&select=*&order=numero_cuota.asc', {
-                  headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
-                })
-                if (allResp.ok) {
-                  const todas = await allResp.json()
-                  todas.forEach(q => {
+                const rp = await portalApi('panel', { crId: creditoIdPoll })
+                if (rp.ok) {
+                  (rp.data.cuotas || []).forEach(q => {
                     const l = DB.cuotas?.find(x => x.id === q.id)
                     if (l) { l.estado = q.estado; l.fechaPago = q.fecha_pago }
                   })
@@ -8080,8 +8049,8 @@ function renderCalendarioHtml(d, forPrint=false) {
   const logoHtml = d.logo
     ? `<img src="${d.logo}" style="height:45px;max-width:110px;object-fit:contain;margin-bottom:4px"><br>` : ''
 
-  const totalPagado   = d.cuotas.filter(q=>q.estado==='PAGADA').reduce((s,q)=>s+q.montoOriginal,0)
-  const totalPendiente= d.cuotas.filter(q=>q.estado!=='PAGADA').reduce((s,q)=>s+(q.montoOriginal+(q.montoRecargo||0)),0)
+  const totalPagado   = cobradoCuotas(d.cuotas)
+  const totalPendiente= sumarSaldos(d.cuotas)
   const cantPagadas   = d.cuotas.filter(q=>q.estado==='PAGADA').length
   const pct           = d.cuotas.length>0 ? Math.round(cantPagadas/d.cuotas.length*100) : 0
 
@@ -8095,7 +8064,7 @@ function renderCalendarioHtml(d, forPrint=false) {
   const filas = d.cuotas.map((q,i) => {
     const bg = i%2===0 ? '#f9fafb' : '#fff'
     const pagada = q.estado==='PAGADA'
-    const monto = q.montoOriginal + (q.montoRecargo||0)
+    const monto = q.estado==='PAGADA' ? (q.montoOriginal + (q.montoRecargo||0)) : calcularSaldoCuota(q)
     return `<tr style="background:${bg}${pagada?';opacity:.7':''}">
       <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:700;color:#374151">${q.numeroCuota}</td>
       <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#374151">${fmtDate(q.fechaVencimiento)}</td>
@@ -8211,7 +8180,7 @@ function enviarCalendarioWA(crId) {
   const proximas5 = d.cuotas
     .filter(q=>q.estado!=='PAGADA')
     .slice(0,5)
-    .map(q=>`  • Cuota ${q.numeroCuota} — ${fmtDate(q.fechaVencimiento)} — ${fmtMoney(q.montoOriginal+(q.montoRecargo||0))}`)
+    .map(q=>`  • Cuota ${q.numeroCuota} — ${fmtDate(q.fechaVencimiento)} — ${fmtMoney(calcularSaldoCuota(q))}`)
     .join('\n')
 
   const lines = [
@@ -8849,6 +8818,53 @@ function actualizarEstadoCuotas() {
 // ════════════════════════════════════════════════════
 // CÁLCULO DE RECARGOS POR ATRASO
 // ════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════
+// SALDOS — única fuente de verdad de "cuánto falta pagar"
+// Saldo de una cuota = monto original + recargo − cobranzas NO anuladas.
+// Todas las pantallas (crédito, deudores, dashboard, informes, cobro rápido,
+// refinanciación, mensajes) usan estas funciones, así los pagos parciales
+// se descuentan siempre de la misma manera.
+// ════════════════════════════════════════════════════
+function indiceCobrado() {
+  const idx = {}
+  for (const cb of DB.cobranzas) {
+    if (cb.anulada) continue
+    idx[cb.cuotaId] = (idx[cb.cuotaId] || 0) + parseFloat(cb.montoCobrado || 0)
+  }
+  return idx
+}
+function saldoConIndice(q, idx) {
+  if (!q || q.estado === 'PAGADA' || q.estado === 'CANCELADA') return 0
+  const s = parseFloat(q.montoOriginal || 0) + parseFloat(q.montoRecargo || 0) - (idx[q.id] || 0)
+  return Math.max(0, Math.round(s * 100) / 100)
+}
+function cobradoCuota(cuotaId) {
+  let t = 0
+  for (const cb of DB.cobranzas) if (!cb.anulada && cb.cuotaId === cuotaId) t += parseFloat(cb.montoCobrado || 0)
+  return Math.round(t * 100) / 100
+}
+function calcularSaldoCuota(c) {
+  if (typeof c === 'string') c = DB.cuotas.find(x => x.id === c)
+  if (!c || c.estado === 'PAGADA' || c.estado === 'CANCELADA') return 0
+  const s = parseFloat(c.montoOriginal || 0) + parseFloat(c.montoRecargo || 0) - cobradoCuota(c.id)
+  return Math.max(0, Math.round(s * 100) / 100)
+}
+function sumarSaldos(cuotas) {
+  const idx = indiceCobrado()
+  let t = 0
+  for (const q of cuotas) t += saldoConIndice(q, idx)
+  return Math.round(t * 100) / 100
+}
+function cobradoCuotas(cuotas) {
+  const idx = indiceCobrado()
+  let t = 0
+  for (const q of cuotas) t += (idx[q.id] || 0)
+  return Math.round(t * 100) / 100
+}
+function calcularSaldoCredito(creditoId) {
+  return sumarSaldos(DB.cuotas.filter(q => q.creditoId === creditoId))
+}
+
 function calcularRecargoCuota(cuota) {
   // Only calculate recargo for VENCIDA cuotas
   if (cuota.estado !== 'VENCIDA') return 0
@@ -8906,7 +8922,7 @@ function setCobriTipo(tipo) {
     // Pre-fill with full amount as suggestion
     const cuota = DB.cuotas.find(q=>q.id===cobroActualCuotaId)
     if (cuota) {
-      const montoTotal = parseFloat(cuota.montoOriginal) + parseFloat(cuota.montoRecargo||0)
+      const montoTotal = calcularSaldoCuota(cuota)
       const inp = $('cobro-monto-parcial')
       if (inp && !inp.value) inp.value = montoTotal
       actualizarSaldoCobro()
@@ -8917,7 +8933,7 @@ function setCobriTipo(tipo) {
 function actualizarSaldoCobro() {
   const cuota = DB.cuotas.find(q=>q.id===cobroActualCuotaId)
   if (!cuota) return
-  const montoTotal = parseFloat(cuota.montoOriginal) + parseFloat(cuota.montoRecargo||0)
+  const montoTotal = calcularSaldoCuota(cuota)
   const ingresado  = parseFloat($('cobro-monto-parcial')?.value||0)
   const saldo      = montoTotal - ingresado
   const info       = $('cobro-saldo-info')
@@ -8927,7 +8943,7 @@ function actualizarSaldoCobro() {
   } else if (ingresado > 0) {
     info.innerHTML = `Saldo pendiente: <b style="color:var(--warn)">${fmtMoney(saldo)}</b>`
   } else {
-    info.innerHTML = `Total cuota: <b>${fmtMoney(montoTotal)}</b>`
+    info.innerHTML = `Saldo de la cuota: <b>${fmtMoney(montoTotal)}</b>`
   }
 }
 
@@ -8941,7 +8957,7 @@ function toggleSinRecargo() {
 
   const recargo    = parseFloat(cuota.montoRecargo||0)
   const montoBase  = parseFloat(cuota.montoOriginal)
-  const montoTotal = sinRecargo ? montoBase : montoBase + recargo
+  const montoTotal = Math.max(0, (sinRecargo ? montoBase : montoBase + recargo) - cobradoCuota(cuota.id))
 
   const cr  = DB.creditos.find(x=>x.id===cuota.creditoId)
   const cli = DB.clientes.find(x=>x.id===cr?.clienteId)
@@ -9001,13 +9017,14 @@ function construirIndiceDeuda() {
   for (const cliId in crPorCliente) {
     for (const crId of crPorCliente[cliId]) crActivos[crId] = cliId
   }
-  // Recorrer cuotas UNA vez y acumular por cliente
+  // Recorrer cuotas UNA vez y acumular por cliente (descontando pagos parciales)
+  const _cobIdxRapido = indiceCobrado()
   for (const q of DB.cuotas) {
     if (q.estado === 'PAGADA' || q.estado === 'CANCELADA') continue
     const cliId = crActivos[q.creditoId]
     if (!cliId) continue
     if (!idx[cliId]) idx[cliId] = { deuda: 0, pend: 0, venc: 0 }
-    idx[cliId].deuda += parseFloat(q.montoOriginal||0) + parseFloat(q.montoRecargo||0)
+    idx[cliId].deuda += saldoConIndice(q, _cobIdxRapido)
     idx[cliId].pend++
     if (q.estado === 'VENCIDA') idx[cliId].venc++
   }
@@ -9107,7 +9124,7 @@ function seleccionarClienteRapido(clienteId) {
   // Update recargos
   cuotas.forEach(q => { if(q.estado==='VENCIDA') q.montoRecargo = calcularRecargoCuota(q) })
 
-  const deudaTotal = cuotas.reduce((s,q)=>s+parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0),0)
+  const deudaTotal = sumarSaldos(cuotas)
   $('cr-deuda-monto').textContent = fmtMoney(deudaTotal)
   $('cr-deuda-total').style.display = deudaTotal > 0 ? 'block' : 'none'
 
@@ -9128,7 +9145,8 @@ function renderCuotasRapidas(cuotas, clienteId) {
 
   lista.innerHTML = cuotas.map(q => {
     const cr = DB.creditos.find(x=>x.id===q.creditoId)
-    const monto = parseFloat(q.montoOriginal) + parseFloat(q.montoRecargo||0)
+    const monto = calcularSaldoCuota(q)
+    const cobradoQ = cobradoCuota(q.id)
     const isVenc = q.estado === 'VENCIDA'
     const hoy = new Date().toISOString().split('T')[0]
     const diasAtr = isVenc ? Math.floor((new Date()-new Date(q.fechaVencimiento+'T00:00:00'))/86400000) : 0
@@ -9148,6 +9166,7 @@ function renderCuotasRapidas(cuotas, clienteId) {
         </div>
         <p style="font-size:12px;color:var(--muted)">${cr?.descripcion||'Crédito'} · Vence: ${fmtDate(q.fechaVencimiento)}</p>
         ${parseFloat(q.montoRecargo)>0 ? `<p style="font-size:11px;color:var(--danger);margin-top:2px">Recargo: ${fmtMoney(q.montoRecargo)}</p>` : ''}
+        ${cobradoQ>0 ? `<p style="font-size:11px;color:var(--warn);margin-top:2px">Ya pagó ${fmtMoney(cobradoQ)} (pago parcial)</p>` : ''}
       </div>
       <!-- Monto -->
       <div style="text-align:right;flex-shrink:0">
@@ -9185,7 +9204,7 @@ function actualizarBtnCobrarRapido() {
   } else {
     const total = [...crCuotasSeleccionadas].reduce((s,id) => {
       const q = DB.cuotas.find(x=>x.id===id)
-      return s + (q ? parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0) : 0)
+      return s + (q ? calcularSaldoCuota(q) : 0)
     }, 0)
     btn.style.display = ''
     btn.textContent = `💳 Cobrar ${crCuotasSeleccionadas.size} cuota${crCuotasSeleccionadas.size>1?'s':''} — ${fmtMoney(total)}`
@@ -9206,7 +9225,7 @@ function cobrarSeleccionadas() {
 function abrirModalCobroMultiple(ids) {
   const total = ids.reduce((s,id) => {
     const q = DB.cuotas.find(x=>x.id===id)
-    return s + (q ? parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0) : 0)
+    return s + (q ? calcularSaldoCuota(q) : 0)
   }, 0)
   const cli = DB.clientes.find(x=>x.id===crClienteId)
   const metodos = [
@@ -9219,7 +9238,7 @@ function abrirModalCobroMultiple(ids) {
   const cuotasHtml = ids.map(id => {
     const q  = DB.cuotas.find(x=>x.id===id)
     const cr = q ? DB.creditos.find(x=>x.id===q.creditoId) : null
-    const m  = q ? parseFloat(q.montoOriginal)+parseFloat(q.montoRecargo||0) : 0
+    const m  = q ? calcularSaldoCuota(q) : 0
     return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a1d2e;font-size:13px">' +
       '<span style="color:#aaa">Cuota ' + (q?.numeroCuota||'?') + ' · ' + (cr?.descripcion||'') + '</span>' +
       '<span style="font-weight:700;color:#fff">' + fmtMoney(m) + '</span></div>'
