@@ -6471,7 +6471,7 @@ function frValidarDni() {
 
   // ── DNI OK → save to localStorage and show contract ───────────────────
   try { localStorage.setItem('hogarcred_firma_dni', dniIngresado) } catch(e) {}
-  window._frDniIngresado = dniIngresado
+  window._frDniIngresado = dniIngresado;
 
   ['fr-step-dni','fr-loading','fr-error','fr-ya-firmado']
     .forEach(id => { const el=$(id); if(el) el.style.display='none' })
@@ -7435,9 +7435,17 @@ function enviarFirmaWhatsApp() {
   const telFmt = tel.startsWith('0') ? '54'+tel.slice(1) : tel.startsWith('54') ? tel : '54'+tel
   const waUrl = `https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`
   console.log('WA URL length:', waUrl.length)
+  copiarLinkFirma(link)
   window.open(waUrl, '_blank')
-  showToast('📲 WhatsApp abierto con el link de firma')
+  showToast('📲 WhatsApp abierto · link copiado al portapapeles')
   registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido})
+}
+
+// ── Copia el link de firma al portapapeles (sirve para pegarlo en cualquier otro medio)
+function copiarLinkFirma(link) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).catch(() => {})
+  } catch(e) {}
 }
 
 // ── Enviar link de firma directo desde la lista (sin abrir el contrato)
@@ -7477,8 +7485,9 @@ function enviarFirmaWhatsAppDirecto(crId) {
   const msg = `✍️ *Firma de contrato — ${empresa}*\n\nHola ${nombre}! Firmá tu crédito desde acá:\n${link}\n\n_${cr.descripcion||'Crédito'} — ${fmtM(cr.precioOriginal)}_`
   const tel = cli.celular.replace(/[^0-9]/g,'')
   const telFmt = tel.startsWith('0') ? '54'+tel.slice(1) : tel.startsWith('54') ? tel : '54'+tel
+  copiarLinkFirma(link)
   window.open(`https://wa.me/${telFmt}?text=${encodeURIComponent(msg)}`, '_blank')
-  showToast('📲 WhatsApp abierto con el link de firma')
+  showToast('📲 WhatsApp abierto · link copiado al portapapeles')
   registrarAuditoria('ENVIO_FIRMA_WA','credito',cr.id,{cliente:cli.nombreApellido})
 }
 
